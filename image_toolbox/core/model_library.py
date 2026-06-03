@@ -194,6 +194,31 @@ def get_interpolation_model_root(engine_id: str) -> Path:
     return get_video_interpolation_models_dir(engine_id)
 
 
+def list_interpolation_models(engine_id: str) -> list[str]:
+    model_root = get_interpolation_model_root(engine_id)
+    if not model_root.exists():
+        return []
+    models = [
+        child.name
+        for child in model_root.iterdir()
+        if child.is_dir() and _contains_strict_model_files(child)
+    ]
+    if not models and _contains_strict_model_files(model_root):
+        models.append("")
+    return sorted(models)
+
+
+def resolve_interpolation_model_dir(engine_id: str, model_name: str = "") -> Path:
+    model_root = get_interpolation_model_root(engine_id)
+    model_dir = model_root / model_name if model_name else model_root
+    if not model_dir.exists() or not _contains_strict_model_files(model_dir):
+        label = f"{engine_id.upper()} {model_name}".strip()
+        raise FileNotFoundError(f"Please import {label} models into the project model library first: {model_dir}")
+    if not is_project_model_path(model_dir):
+        raise ValueError(f"{engine_id.upper()} model path must be inside the project model library: {model_dir}")
+    return model_dir
+
+
 def validate_interpolation_model_root(engine_id: str) -> Path:
     model_root = get_interpolation_model_root(engine_id)
     if not model_root.exists() or not _contains_model_files(model_root):
@@ -203,9 +228,17 @@ def validate_interpolation_model_root(engine_id: str) -> Path:
     return model_root
 
 
-def build_rife_command(executable_path: Path, input_frames: Path, output_frames: Path, scale: int = 2) -> list[str]:
-    model_root = validate_interpolation_model_root("rife")
-    return [
+def build_rife_command(
+    executable_path: Path,
+    input_frames: Path,
+    output_frames: Path,
+    scale: int = 2,
+    model_name: str = "",
+    gpu_id: str = "auto",
+    use_tta: bool = False,
+) -> list[str]:
+    model_root = resolve_interpolation_model_dir("rife", model_name)
+    command = [
         str(executable_path),
         "-i",
         str(input_frames.resolve()),
@@ -216,6 +249,11 @@ def build_rife_command(executable_path: Path, input_frames: Path, output_frames:
         "-n",
         str(scale),
     ]
+    if gpu_id and gpu_id != "auto":
+        command.extend(["-g", gpu_id])
+    if use_tta:
+        command.append("-x")
+    return command
 
 
 def import_custom_model(engine_id: str, source: Path, model_name: str | None = None, strategy: str = "rename") -> tuple[str, CopyStats]:

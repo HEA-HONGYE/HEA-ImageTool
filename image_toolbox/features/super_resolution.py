@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
 
 from image_toolbox.core.config import AppConfig
 from image_toolbox.core.engine_settings import get_engine_settings_store, is_engine_enabled, is_model_enabled
+from image_toolbox.core.ffmpeg_tools import media_fps, probe_media
+from image_toolbox.core.media_tasks import VideoMediaTask, VideoProcessSettings, list_rife_models
 from image_toolbox.core.super_resolution import (
     SuperResolutionBatchTask,
     SuperResolutionSettings,
@@ -33,6 +35,7 @@ from image_toolbox.core.upscale_engines import DEFAULT_ENGINE_MANAGER
 from image_toolbox.core.upscale_engines.presets import UPSCALE_PRESETS
 from image_toolbox.features.base import ToolFeature
 from image_toolbox.ui.widgets import NoWheelComboBox as QComboBox
+from image_toolbox.ui.widgets import NoWheelDoubleSpinBox as QDoubleSpinBox
 from image_toolbox.ui.widgets import NoWheelSpinBox as QSpinBox
 
 
@@ -65,6 +68,7 @@ class SuperResolutionFeature(ToolFeature):
         self.threads_edit: QLineEdit | None = None
         self.tta_checkbox: QCheckBox | None = None
         self.low_memory_checkbox: QCheckBox | None = None
+        self.upscale_enabled_checkbox: QCheckBox | None = None
         self.conflict_combo: QComboBox | None = None
         self.output_edit: QLineEdit | None = None
         self.engine_info_label: QLabel | None = None
@@ -72,6 +76,16 @@ class SuperResolutionFeature(ToolFeature):
         self.output_info_label: QLabel | None = None
         self.animated_hint_label: QLabel | None = None
         self.video_hint_label: QLabel | None = None
+        self.keep_audio_checkbox: QCheckBox | None = None
+        self.keep_temp_checkbox: QCheckBox | None = None
+        self.video_fps_spin: QDoubleSpinBox | None = None
+        self.interpolation_enabled_checkbox: QCheckBox | None = None
+        self.interpolation_engine_combo: QComboBox | None = None
+        self.interpolation_scale_combo: QComboBox | None = None
+        self.interpolation_model_combo: QComboBox | None = None
+        self.interpolation_gpu_edit: QLineEdit | None = None
+        self.interpolation_tta_checkbox: QCheckBox | None = None
+        self.interpolation_preview_label: QLabel | None = None
         self._files: list[Path] = []
         self._statuses: list[str] = []
         self._selected_file: Path | None = None
@@ -191,9 +205,23 @@ class SuperResolutionFeature(ToolFeature):
         self.quality_spin.setValue(self.config.get("quality", 95, int))
         self.quality_spin.valueChanged.connect(self._refresh_preview)
         form.addRow("图片质量", self.quality_spin)
+        self.video_fps_spin = QDoubleSpinBox()
+        self.video_fps_spin.setRange(0, 240)
+        self.video_fps_spin.setDecimals(3)
+        self.video_fps_spin.setSingleStep(1)
+        self.video_fps_spin.setValue(self.config.get("video_output_fps", 0.0, float))
+        self.video_fps_spin.setToolTip("0 表示自动：仅超分保持原 FPS，插帧按倍率提升 FPS。")
+        self.video_fps_spin.valueChanged.connect(self._refresh_preview)
+        form.addRow("视频输出 FPS", self.video_fps_spin)
+        self.keep_audio_checkbox = QCheckBox("保留原音频")
+        self.keep_audio_checkbox.setChecked(self.config.get("keep_audio", True, bool))
+        form.addRow("音频", self.keep_audio_checkbox)
+        self.keep_temp_checkbox = QCheckBox("保留临时帧目录（调试用）")
+        self.keep_temp_checkbox.setChecked(self.config.get("keep_temp", False, bool))
+        form.addRow("临时文件", self.keep_temp_checkbox)
         self.animated_hint_label = QLabel("动图增强、逐帧超分和帧补偿将在后续版本开放。")
         self.animated_hint_label.setObjectName("MutedText")
-        self.video_hint_label = QLabel("视频超分、AI 插帧、音频保留和封装流程已预留入口，当前版本不执行视频任务。")
+        self.video_hint_label = QLabel("视频任务已支持基础拆帧、图片引擎逐帧超分、RIFE 插帧和 MP4 合成。")
         self.video_hint_label.setObjectName("MutedText")
         self.animated_hint_label.setWordWrap(True)
         self.video_hint_label.setWordWrap(True)
@@ -228,6 +256,10 @@ class SuperResolutionFeature(ToolFeature):
     def _build_upscale_group(self) -> QWidget:
         group = QGroupBox("AI 超分与增强参数")
         form = QFormLayout(group)
+        self.upscale_enabled_checkbox = QCheckBox("启用超分 / 图片增强")
+        self.upscale_enabled_checkbox.setChecked(self.config.get("upscale_enabled", True, bool))
+        self.upscale_enabled_checkbox.stateChanged.connect(self._refresh_preview)
+        form.addRow("开关", self.upscale_enabled_checkbox)
         self.engine_info_label = QLabel("")
         self.engine_info_label.setObjectName("MutedText")
         self.engine_info_label.setWordWrap(True)
@@ -256,17 +288,61 @@ class SuperResolutionFeature(ToolFeature):
     def _build_interpolation_group(self) -> QWidget:
         group = QGroupBox("AI 插帧")
         form = QFormLayout(group)
-        frame_mode = QComboBox()
-        frame_mode.addItem("不插帧", "off")
-        frame_mode.addItem("2x（预留）", "2x")
-        frame_mode.addItem("4x（预留）", "4x")
-        frame_mode.setEnabled(False)
-        form.addRow("帧率倍率", frame_mode)
-        hint = QLabel("RIFE / DAIN / CAIN 等视频插帧引擎将在后续视频版本接入。")
-        hint.setObjectName("MutedText")
-        hint.setWordWrap(True)
-        form.addRow("状态", hint)
+        self.interpolation_enabled_checkbox = QCheckBox("启用插帧")
+        self.interpolation_enabled_checkbox.setChecked(self.config.get("interpolation_enabled", False, bool))
+        self.interpolation_enabled_checkbox.stateChanged.connect(self._on_interpolation_changed)
+        form.addRow("开关", self.interpolation_enabled_checkbox)
+        self.interpolation_engine_combo = QComboBox()
+        self.interpolation_engine_combo.addItem("RIFE", "rife")
+        form.addRow("插帧引擎", self.interpolation_engine_combo)
+        self.interpolation_scale_combo = QComboBox()
+        self.interpolation_scale_combo.addItem("2x", 2)
+        self.interpolation_scale_combo.addItem("4x", 4)
+        self.interpolation_scale_combo.setCurrentIndex(max(0, self.interpolation_scale_combo.findData(self.config.get("interpolation_scale", 2, int))))
+        self.interpolation_scale_combo.currentIndexChanged.connect(self._refresh_preview)
+        form.addRow("插帧倍率", self.interpolation_scale_combo)
+        self.interpolation_model_combo = QComboBox()
+        self._refresh_rife_models()
+        form.addRow("模型", self.interpolation_model_combo)
+        self.interpolation_gpu_edit = QLineEdit(self.config.get("interpolation_gpu_id", "auto"))
+        form.addRow("GPU ID", self.interpolation_gpu_edit)
+        self.interpolation_tta_checkbox = QCheckBox("启用 TTA（如果当前 RIFE 版本支持）")
+        self.interpolation_tta_checkbox.setChecked(self.config.get("interpolation_tta", False, bool))
+        form.addRow("TTA", self.interpolation_tta_checkbox)
+        self.interpolation_preview_label = QLabel("输出 FPS：自动")
+        self.interpolation_preview_label.setObjectName("MutedText")
+        self.interpolation_preview_label.setWordWrap(True)
+        form.addRow("预览", self.interpolation_preview_label)
+        self._on_interpolation_changed()
         return group
+
+    def _refresh_rife_models(self) -> None:
+        if not self.interpolation_model_combo:
+            return
+        saved_model = self.config.get("interpolation_model", "", str)
+        self.interpolation_model_combo.blockSignals(True)
+        self.interpolation_model_combo.clear()
+        models = list_rife_models()
+        if models:
+            for model in models:
+                self.interpolation_model_combo.addItem(model or "默认模型目录", model)
+            self.interpolation_model_combo.setCurrentIndex(max(0, self.interpolation_model_combo.findData(saved_model)))
+        else:
+            self.interpolation_model_combo.addItem("未导入 RIFE 模型", "")
+        self.interpolation_model_combo.blockSignals(False)
+
+    def _on_interpolation_changed(self, *_args: object) -> None:
+        enabled = self.interpolation_enabled_checkbox.isChecked() if self.interpolation_enabled_checkbox else False
+        for widget in [
+            self.interpolation_engine_combo,
+            self.interpolation_scale_combo,
+            self.interpolation_model_combo,
+            self.interpolation_gpu_edit,
+            self.interpolation_tta_checkbox,
+        ]:
+            if widget:
+                widget.setEnabled(enabled)
+        self._refresh_preview()
 
     def _build_preview_group(self) -> QWidget:
         group = QGroupBox("预计输出信息")
@@ -380,14 +456,65 @@ class SuperResolutionFeature(ToolFeature):
 
     def create_task(self, files: list[Path]) -> SuperResolutionBatchTask:
         actual_files = self.get_workbench_files() or files
-        unsupported = [path for path in actual_files if self._media_type(path) != "图片"]
-        if unsupported:
-            names = "、".join(path.name for path in unsupported[:3])
-            raise ValueError(f"v3.3.8 当前只执行图片增强；动图和视频已预留 UI，后续版本接入。暂不支持：{names}")
+        image_files = [path for path in actual_files if self._media_type(path) == "图片"]
+        video_files = [path for path in actual_files if self._media_type(path) == "视频"]
+        animated_files = [path for path in actual_files if self._media_type(path) == "动图"]
+        if animated_files:
+            names = "、".join(path.name for path in animated_files[:3])
+            raise ValueError(f"动图流程仍在预留阶段，暂不执行：{names}")
+        if image_files and video_files:
+            raise ValueError("请分开执行图片任务和视频任务，当前版本暂不支持混合队列。")
+        if video_files:
+            settings = self._collect_video_settings()
+            self._save_video_settings(settings)
+            return VideoMediaTask(video_files, settings)
+        if self.upscale_enabled_checkbox and not self.upscale_enabled_checkbox.isChecked():
+            raise ValueError("图片任务需要启用超分 / 图片增强。")
         settings = self._collect_settings()
         validate_super_resolution_inputs(actual_files, settings)
         self._save_settings(settings)
         return SuperResolutionBatchTask(actual_files, settings)
+
+    def _collect_video_settings(self) -> VideoProcessSettings:
+        upscale_settings = self._collect_settings()
+        frame_upscale_settings = SuperResolutionSettings(
+            engine_id=upscale_settings.engine_id,
+            output_dir=upscale_settings.output_dir,
+            model_name=upscale_settings.model_name,
+            scale=upscale_settings.scale,
+            output_format="png",
+            keep_original_format=False,
+            quality=95,
+            tile_mode=upscale_settings.tile_mode,
+            tile_size=upscale_settings.tile_size,
+            gpu_id=upscale_settings.gpu_id,
+            threads=upscale_settings.threads,
+            use_tta=upscale_settings.use_tta,
+            low_memory_mode=upscale_settings.low_memory_mode,
+            conflict_strategy="overwrite",
+            noise_level=upscale_settings.noise_level,
+            syncgap_mode=upscale_settings.syncgap_mode,
+        )
+        interpolation_enabled = self.interpolation_enabled_checkbox.isChecked() if self.interpolation_enabled_checkbox else False
+        upscale_enabled = self.upscale_enabled_checkbox.isChecked() if self.upscale_enabled_checkbox else True
+        if not upscale_enabled and not interpolation_enabled:
+            raise ValueError("请至少启用超分或插帧。")
+        return VideoProcessSettings(
+            output_dir=upscale_settings.output_dir,
+            output_format="mp4",
+            keep_audio=self.keep_audio_checkbox.isChecked() if self.keep_audio_checkbox else True,
+            keep_temp=self.keep_temp_checkbox.isChecked() if self.keep_temp_checkbox else False,
+            upscale_enabled=upscale_enabled,
+            interpolation_enabled=interpolation_enabled,
+            interpolation_engine=self.interpolation_engine_combo.currentData() if self.interpolation_engine_combo else "rife",
+            interpolation_scale=self.interpolation_scale_combo.currentData() if self.interpolation_scale_combo else 2,
+            interpolation_model=self.interpolation_model_combo.currentData() if self.interpolation_model_combo else "",
+            interpolation_gpu_id=self.interpolation_gpu_edit.text() if self.interpolation_gpu_edit else "auto",
+            interpolation_tta=self.interpolation_tta_checkbox.isChecked() if self.interpolation_tta_checkbox else False,
+            output_fps=self.video_fps_spin.value() if self.video_fps_spin else 0.0,
+            conflict_strategy=self.conflict_combo.currentData() if self.conflict_combo else "rename",
+            upscale_settings=frame_upscale_settings,
+        )
 
     def _collect_settings(self) -> SuperResolutionSettings:
         output_dir = Path(self.output_edit.text() if self.output_edit else "output")
@@ -428,6 +555,19 @@ class SuperResolutionFeature(ToolFeature):
         self.config.set("conflict_strategy", settings.conflict_strategy)
         self.config.set("noise_level", settings.noise_level)
         self.config.set("syncgap_mode", settings.syncgap_mode)
+
+    def _save_video_settings(self, settings: VideoProcessSettings) -> None:
+        if settings.upscale_settings:
+            self._save_settings(settings.upscale_settings)
+        self.config.set("upscale_enabled", settings.upscale_enabled)
+        self.config.set("keep_audio", settings.keep_audio)
+        self.config.set("keep_temp", settings.keep_temp)
+        self.config.set("interpolation_enabled", settings.interpolation_enabled)
+        self.config.set("interpolation_scale", settings.interpolation_scale)
+        self.config.set("interpolation_model", settings.interpolation_model)
+        self.config.set("interpolation_gpu_id", settings.interpolation_gpu_id)
+        self.config.set("interpolation_tta", settings.interpolation_tta)
+        self.config.set("video_output_fps", settings.output_fps)
 
     def update_file_context(self, files: list[Path], selected_file: Path | None, logger: Callable[[str], None] | None = None) -> None:
         if not self._files and files:
@@ -580,8 +720,25 @@ class SuperResolutionFeature(ToolFeature):
         selected = self._selected_file or self._files[0]
         media_type = self._media_type(selected)
         if media_type != "图片":
-            self.size_label.setText(f"当前参考文件：{selected.name}\n类型：{media_type}\n该类型处理流程已预留，后续版本开放执行。")
-            self.output_info_label.setText("动图和视频的输出大小受帧数、编码、插帧倍率和超分倍率影响较大，仅供参考。")
+            interpolation_enabled = self.interpolation_enabled_checkbox.isChecked() if self.interpolation_enabled_checkbox else False
+            interpolation_scale = self.interpolation_scale_combo.currentData() if self.interpolation_scale_combo else 2
+            upscale_enabled = self.upscale_enabled_checkbox.isChecked() if self.upscale_enabled_checkbox else True
+            mode_text = "超分 + 插帧" if upscale_enabled and interpolation_enabled else ("仅插帧" if interpolation_enabled else "仅超分")
+            fps_text = "自动"
+            if media_type == "视频":
+                try:
+                    source_fps = media_fps(probe_media(selected))
+                    selected_fps = self.video_fps_spin.value() if self.video_fps_spin else 0
+                    output_fps = selected_fps or source_fps * (interpolation_scale if interpolation_enabled else 1)
+                    fps_text = f"{source_fps:.3f} -> {output_fps:.3f}"
+                except Exception:
+                    fps_text = "需要 ffprobe 才能预览"
+            self.size_label.setText(
+                f"当前参考文件：{selected.name}\n类型：{media_type}\n处理模式：{mode_text}\nRIFE 倍率：{interpolation_scale}x\n输出 FPS：{fps_text}"
+            )
+            self.output_info_label.setText("视频输出大小受帧数、编码、插帧倍率、超分倍率和音频保留影响较大，仅供参考。")
+            if self.interpolation_preview_label:
+                self.interpolation_preview_label.setText(f"输出 FPS：{fps_text}")
             return
         scale = self.scale_combo.currentData() if self.scale_combo else 4
         try:

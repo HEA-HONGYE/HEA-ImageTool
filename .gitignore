@@ -11,6 +11,12 @@ assets/models/**/*
 engines/**/*
 !engines/**/
 !engines/**/README.md
+tools/ffmpeg/**/*
+!tools/ffmpeg/**/
+!tools/ffmpeg/**/.gitkeep
+!tools/ffmpeg/**/README.md
+temp/
+media_tasks/
 ai超分参考文件/
 build/
 dist/
@@ -23,5 +29,12 @@ dist/
 *.model
 *.weights
 *.tmp
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
+*.m4v
+*.apng
 engine_settings.json
 hea_engine_settings*.json
