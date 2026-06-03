@@ -9,4 +9,4 @@ if (-not (Test-Path -LiteralPath $python)) {
     exit 1
 }
 
-& $python -m image_toolbox.launcher
+& $python -m image_toolbox

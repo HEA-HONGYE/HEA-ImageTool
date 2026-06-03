@@ -11,4 +11,4 @@ echo Missing virtual environment: .venv
     exit /b 1
 )
 
-"%PYTHON%" -m image_toolbox.launcher
+"%PYTHON%" -m image_toolbox

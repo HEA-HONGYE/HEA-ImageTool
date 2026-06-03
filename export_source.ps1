@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $root = $PSScriptRoot
 $exportRoot = Join-Path $root "release"
-$target = Join-Path $exportRoot "hea-v1-source"
+$target = Join-Path $exportRoot "hea-source"
 
 if (Test-Path -LiteralPath $target) {
     Remove-Item -LiteralPath $target -Recurse -Force

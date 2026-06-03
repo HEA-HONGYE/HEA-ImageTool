@@ -14,6 +14,7 @@ from image_toolbox.features.conversion import ConversionFeature
 from image_toolbox.features.home import HomePanel
 from image_toolbox.features.rename import RenameFeature
 from image_toolbox.features.resize import ResizeFeature
+from image_toolbox.features.super_resolution import SuperResolutionFeature
 from image_toolbox.features.watermark import WatermarkFeature
 from image_toolbox.ui.file_panel import FilePanel
 
@@ -28,6 +29,7 @@ class MainWindow(QMainWindow):
             "compress": CompressionFeature(),
             "convert": ConversionFeature(),
             "resize": ResizeFeature(),
+            "super_resolution": SuperResolutionFeature(),
             "watermark": WatermarkFeature(),
             "rename": RenameFeature(),
         }
@@ -87,6 +89,7 @@ class MainWindow(QMainWindow):
         self._add_nav_button(layout, "compress", "图片压缩")
         self._add_nav_button(layout, "convert", "格式转换")
         self._add_nav_button(layout, "resize", "批量改尺寸")
+        self._add_nav_button(layout, "super_resolution", "AI 超分")
         self._add_nav_button(layout, "watermark", "批量加水印")
         self._add_nav_button(layout, "rename", "批量重命名")
         layout.addStretch()
