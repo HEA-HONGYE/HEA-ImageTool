@@ -1,0 +1,18 @@
+[
+  {
+    "key": "v2",
+    "name": "HEA V2",
+    "aliases": ["2", "hea"],
+    "description": "图片压缩 / 格式转换 / 改尺寸 / 加水印 / 重命名",
+    "module": "image_toolbox"
+  },
+  {
+    "key": "v1",
+    "name": "HEA V1",
+    "aliases": ["1"],
+    "description": "图片压缩 / 格式转换",
+    "module": "image_toolbox",
+    "working_dir": "C:/Users/admin/Documents/图片工具",
+    "python": "C:/Users/admin/Documents/图片工具/.venv/Scripts/python.exe"
+  }
+]
