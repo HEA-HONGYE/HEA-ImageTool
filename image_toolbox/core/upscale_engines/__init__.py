@@ -1,6 +1,9 @@
 from image_toolbox.core.upscale_engines.manager import DEFAULT_ENGINE_MANAGER, EngineManager
+from image_toolbox.core.upscale_engines.anime4k import Anime4kEngine
 from image_toolbox.core.upscale_engines.realcugan import RealCuganEngine
 from image_toolbox.core.upscale_engines.realesrgan import RealEsrganEngine
+from image_toolbox.core.upscale_engines.realsr import RealSrEngine
+from image_toolbox.core.upscale_engines.srmd import SrmdEngine
 from image_toolbox.core.upscale_engines.waifu2x import Waifu2xEngine
 from image_toolbox.core.upscale_engines.types import (
     CANCELLED,
@@ -23,6 +26,7 @@ from image_toolbox.core.upscale_engines.types import (
 )
 
 __all__ = [
+    "Anime4kEngine",
     "CANCELLED",
     "DEFAULT_ENGINE_MANAGER",
     "ENGINE_NOT_FOUND",
@@ -38,6 +42,8 @@ __all__ = [
     "PROCESS_FAILED",
     "RealCuganEngine",
     "RealEsrganEngine",
+    "RealSrEngine",
+    "SrmdEngine",
     "UNKNOWN_ERROR",
     "VULKAN_ERROR",
     "Waifu2xEngine",

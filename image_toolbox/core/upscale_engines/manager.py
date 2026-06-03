@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from image_toolbox.core.upscale_engines.base import BaseUpscaleEngine
+from image_toolbox.core.upscale_engines.anime4k import Anime4kEngine
 from image_toolbox.core.upscale_engines.realcugan import RealCuganEngine
 from image_toolbox.core.upscale_engines.realesrgan import RealEsrganEngine
+from image_toolbox.core.upscale_engines.realsr import RealSrEngine
+from image_toolbox.core.upscale_engines.srmd import SrmdEngine
 from image_toolbox.core.upscale_engines.types import EngineInfo
 from image_toolbox.core.upscale_engines.waifu2x import Waifu2xEngine
 
@@ -34,6 +37,9 @@ def create_default_engine_manager() -> EngineManager:
     manager.register(RealEsrganEngine())
     manager.register(Waifu2xEngine())
     manager.register(RealCuganEngine())
+    manager.register(RealSrEngine())
+    manager.register(SrmdEngine())
+    manager.register(Anime4kEngine())
     return manager
 
 
