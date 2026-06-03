@@ -19,7 +19,7 @@ class HomePanel(QWidget):
         title.setObjectName("HeroTitle")
         version = QLabel(f"Version {APP_VERSION}")
         version.setObjectName("MutedText")
-        intro = QLabel("V3.3.6 重构引擎设置界面，按图片引擎 Tab 管理模型、路径、默认参数和高级选项。")
+        intro = QLabel("V3.3.7 建立项目内置模型库，支持迁移外部素材模型并让运行路径与素材库解耦。")
         intro.setWordWrap(True)
         intro.setObjectName("IntroText")
 

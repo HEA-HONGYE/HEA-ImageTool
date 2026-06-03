@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 from image_toolbox.core.engine_settings import resolve_executable_path, resolve_model_root
+from image_toolbox.core.paths import get_engine_models_dir, get_project_root
 from image_toolbox.core.upscale_engines.base import BaseUpscaleEngine
 from image_toolbox.core.upscale_engines.types import (
     ENGINE_NOT_FOUND,
@@ -19,14 +20,9 @@ from image_toolbox.core.upscale_engines.types import (
 )
 
 
-REALESRGAN_ROOT = (
-    Path(__file__).resolve().parents[3]
-    / "ai超分参考文件"
-    / "realesrga图片放大"
-    / "realesrgan-ncnn-vulkan-20211212-windows"
-)
+REALESRGAN_ROOT = get_project_root() / "engines" / "realesrgan-ncnn-vulkan"
 REALESRGAN_EXE = REALESRGAN_ROOT / "realesrgan-ncnn-vulkan.exe"
-REALESRGAN_MODELS = REALESRGAN_ROOT / "models"
+REALESRGAN_MODELS = get_engine_models_dir("realesrgan")
 REALESRGAN_LOW_MEMORY_TILE = 128
 
 
@@ -53,17 +49,29 @@ class RealEsrganEngine(BaseUpscaleEngine):
     def models_path(self) -> Path:
         return resolve_model_root(self.engine_id, REALESRGAN_MODELS)
 
+    def _model_dir(self, model_name: str) -> Path:
+        nested = self.models_path / model_name
+        if nested.exists():
+            return nested
+        custom_root = self.models_path / "custom"
+        if custom_root.exists():
+            for param_file in custom_root.rglob(f"{model_name}.param"):
+                return param_file.parent
+        return self.models_path
+
+    def _model_files_exist(self, model_name: str) -> bool:
+        model_dir = self._model_dir(model_name)
+        return (model_dir / f"{model_name}.bin").exists() and (model_dir / f"{model_name}.param").exists()
+
     def validate_config(self, config: UpscaleConfig) -> None:
         if not self.executable_path.exists():
             raise FileNotFoundError(f"{ENGINE_NOT_FOUND}：找不到 Real-ESRGAN 可执行文件：{self.executable_path}")
         if not self.models_path.exists():
             raise FileNotFoundError(f"{MODEL_NOT_FOUND}：找不到 Real-ESRGAN 模型目录：{self.models_path}")
         model_names = {model.name for model in self.supported_models}
-        if config.model_name not in model_names:
+        if config.model_name not in model_names and not self._model_files_exist(config.model_name):
             raise ValueError(f"{INVALID_CONFIG}：不支持的模型：{config.model_name}")
-        model_bin = self.models_path / f"{config.model_name}.bin"
-        model_param = self.models_path / f"{config.model_name}.param"
-        if not model_bin.exists() or not model_param.exists():
+        if not self._model_files_exist(config.model_name):
             raise FileNotFoundError(f"{MODEL_NOT_FOUND}：未找到模型文件：{config.model_name}.bin / {config.model_name}.param")
         if config.scale not in self.supported_scales:
             raise ValueError(f"{INVALID_CONFIG}：Real-ESRGAN 只支持 2x 或 4x。")
@@ -81,6 +89,8 @@ class RealEsrganEngine(BaseUpscaleEngine):
             str(output_path.resolve()),
             "-n",
             config.model_name,
+            "-m",
+            str(self._model_dir(config.model_name).resolve()),
             "-s",
             str(config.scale),
             "-t",
@@ -112,10 +122,17 @@ class RealEsrganEngine(BaseUpscaleEngine):
         return REALESRGAN_LOW_MEMORY_TILE if low_memory else 0
 
     def get_model_info(self) -> list[UpscaleModel]:
-        return list(self.supported_models)
+        available = [model for model in self.supported_models if self._model_files_exist(model.name)]
+        custom_root = self.models_path / "custom"
+        if custom_root.exists():
+            for param_file in custom_root.rglob("*.param"):
+                model_name = param_file.stem
+                if param_file.with_suffix(".bin").exists():
+                    available.append(UpscaleModel(model_name, model_name, "导入到项目模型库的自定义模型。"))
+        return available
 
     def get_model_path(self, model_id: str) -> Path | None:
-        return self.models_path / f"{model_id}.param"
+        return self._model_dir(model_id) / f"{model_id}.param"
 
     def get_info(self) -> EngineInfo:
         available = True

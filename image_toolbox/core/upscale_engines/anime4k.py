@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from image_toolbox.core.engine_settings import resolve_executable_path
+from image_toolbox.core.paths import get_engine_models_dir, get_project_root
 from image_toolbox.core.upscale_engines.base import BaseUpscaleEngine
 from image_toolbox.core.upscale_engines.types import (
     ENGINE_NOT_FOUND,
@@ -19,7 +20,7 @@ from image_toolbox.core.upscale_engines.types import (
 )
 
 
-ANIME4K_ROOT = Path(__file__).resolve().parents[3] / "ai超分参考文件" / "waifu2x-extension-gui" / "Anime4K"
+ANIME4K_ROOT = get_project_root() / "engines" / "Anime4K"
 ANIME4K_EXE = ANIME4K_ROOT / "Anime4K_waifu2xEX.exe"
 
 
@@ -94,7 +95,7 @@ class Anime4kEngine(BaseUpscaleEngine):
         return list(self.supported_models)
 
     def get_model_path(self, model_id: str) -> Path | None:
-        return ANIME4K_ROOT
+        return get_engine_models_dir("anime4k")
 
     def health_check(self) -> tuple[bool, str]:
         if self._health_cache is not None:

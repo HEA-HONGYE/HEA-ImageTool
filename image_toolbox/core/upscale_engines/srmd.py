@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from image_toolbox.core.engine_settings import resolve_executable_path, resolve_model_root
+from image_toolbox.core.paths import get_engine_models_dir, get_project_root
 from image_toolbox.core.upscale_engines.base import BaseUpscaleEngine
 from image_toolbox.core.upscale_engines.types import (
     ENGINE_NOT_FOUND,
@@ -24,10 +25,10 @@ from image_toolbox.core.upscale_engines.types import (
 )
 
 
-SRMD_ROOT = Path(__file__).resolve().parents[3] / "ai超分参考文件" / "waifu2x-extension-gui" / "srmd-ncnn-vulkan"
+SRMD_ROOT = get_project_root() / "engines" / "srmd-ncnn-vulkan"
 SRMD_EXE = SRMD_ROOT / "srmd-ncnn-vulkan_waifu2xEX.exe"
 SRMD_FALLBACK_EXE = SRMD_ROOT / "srmd-ncnn-vulkan.exe"
-SRMD_MODELS = SRMD_ROOT / "models-srmd"
+SRMD_MODELS = get_engine_models_dir("srmd")
 SRMD_LOW_MEMORY_TILE = 128
 
 
@@ -58,6 +59,13 @@ class SrmdEngine(BaseUpscaleEngine):
     def models_path(self) -> Path:
         return resolve_model_root(self.engine_id, SRMD_MODELS)
 
+    def _model_root(self, model_name: str) -> Path:
+        nested = self.models_path / model_name
+        prefix = "srmdnf" if model_name == "srmdnf" else "srmd"
+        if nested.exists() and any((nested / f"{prefix}_x{scale}.param").exists() for scale in self.supported_scales):
+            return nested
+        return self.models_path
+
     def validate_config(self, config: UpscaleConfig) -> None:
         if not self.executable_path.exists():
             raise FileNotFoundError(f"{ENGINE_NOT_FOUND}：找不到 SRMD 可执行文件：{SRMD_EXE}")
@@ -68,7 +76,8 @@ class SrmdEngine(BaseUpscaleEngine):
         if config.scale not in self.supported_scales:
             raise ValueError(f"{INVALID_CONFIG}：SRMD 当前支持 2x、3x、4x。")
         prefix = "srmdnf" if config.model_name == "srmdnf" else "srmd"
-        if not (self.models_path / f"{prefix}_x{config.scale}.param").exists() or not (self.models_path / f"{prefix}_x{config.scale}.bin").exists():
+        model_root = self._model_root(config.model_name)
+        if not (model_root / f"{prefix}_x{config.scale}.param").exists() or not (model_root / f"{prefix}_x{config.scale}.bin").exists():
             raise FileNotFoundError(f"{MODEL_NOT_FOUND}：未找到 SRMD {config.scale}x 模型文件。")
         if config.model_name == "srmdnf" and config.noise_level != -1:
             raise ValueError(f"{INVALID_CONFIG}：SRMD 无降噪模型只允许降噪为 -1。")
@@ -94,7 +103,7 @@ class SrmdEngine(BaseUpscaleEngine):
             "-t",
             str(config.tile_size if config.tile_mode == "manual" else self.get_default_tile(config.low_memory_mode)),
             "-m",
-            str(self.models_path.resolve()),
+            str(self._model_root(config.model_name).resolve()),
             "-g",
             config.gpu_id.strip() or "auto",
             "-j",
@@ -130,9 +139,15 @@ class SrmdEngine(BaseUpscaleEngine):
         return SRMD_LOW_MEMORY_TILE if low_memory else 0
 
     def get_model_info(self) -> list[UpscaleModel]:
-        if self.models_path.exists():
-            return list(self.supported_models)
-        return []
+        if not self.models_path.exists():
+            return []
+        available = []
+        for model in self.supported_models:
+            prefix = "srmdnf" if model.name == "srmdnf" else "srmd"
+            model_root = self._model_root(model.name)
+            if any((model_root / f"{prefix}_x{scale}.param").exists() for scale in self.supported_scales):
+                available.append(model)
+        return available
 
     def get_model_path(self, model_id: str) -> Path | None:
         return self.models_path

@@ -8,6 +8,8 @@ from typing import Any
 
 from PySide6.QtCore import QStandardPaths
 
+from image_toolbox.core.paths import ensure_project_model_dirs, get_engine_models_dir, is_project_model_path, looks_like_external_asset_path
+
 
 ENGINE_SETTINGS_ENV = "HEA_ENGINE_SETTINGS_PATH"
 
@@ -62,16 +64,19 @@ class EngineSettingsStore:
         self.path = path or default_settings_path()
         self.global_settings = GlobalEngineSettings()
         self.engines: dict[str, EngineSettings] = {}
+        ensure_project_model_dirs()
         self.load()
 
     def load(self) -> None:
         if not self.path.exists():
             self.engines = {}
+            self._ensure_project_model_defaults()
             return
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             self.engines = {}
+            self._ensure_project_model_defaults()
             return
         global_raw = data.get("global", {})
         self.global_settings = GlobalEngineSettings(**{k: v for k, v in global_raw.items() if k in GlobalEngineSettings.__dataclass_fields__})
@@ -84,6 +89,7 @@ class EngineSettingsStore:
             payload = {key: value for key, value in raw_engine.items() if key not in {"engine_id", "models"}}
             engines[engine_id] = EngineSettings(engine_id=engine_id, models=models, **payload)
         self.engines = engines
+        self._ensure_project_model_defaults()
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -97,6 +103,9 @@ class EngineSettingsStore:
     def get_engine(self, engine_id: str) -> EngineSettings:
         if engine_id not in self.engines:
             self.engines[engine_id] = EngineSettings(engine_id=engine_id)
+        settings = self.engines[engine_id]
+        if not settings.model_dir:
+            settings.model_dir = str(get_engine_models_dir(engine_id))
         return self.engines[engine_id]
 
     def update_engine(self, settings: EngineSettings) -> None:
@@ -107,6 +116,18 @@ class EngineSettingsStore:
         if model_id not in engine.models:
             engine.models[model_id] = ModelSettings(model_id=model_id)
         return engine.models[model_id]
+
+    def _ensure_project_model_defaults(self) -> None:
+        for engine_id, settings in self.engines.items():
+            default_dir = get_engine_models_dir(engine_id)
+            if not settings.model_dir:
+                settings.model_dir = str(default_dir)
+                continue
+            configured = Path(settings.model_dir)
+            if looks_like_external_asset_path(configured) or not is_project_model_path(configured):
+                settings.extra_params["legacy_model_dir"] = settings.model_dir
+                settings.extra_params["needs_model_migration"] = True
+                settings.model_dir = str(default_dir)
 
 
 def default_settings_path() -> Path:
@@ -137,12 +158,19 @@ def reload_engine_settings_store(path: Path | None = None) -> EngineSettingsStor
 
 def resolve_executable_path(engine_id: str, default_path: Path) -> Path:
     configured = get_engine_settings_store().get_engine(engine_id).executable_path
-    return Path(configured) if configured else default_path
+    if configured and not looks_like_external_asset_path(configured):
+        return Path(configured)
+    return default_path
 
 
-def resolve_model_root(engine_id: str, default_path: Path) -> Path:
+def resolve_model_root(engine_id: str, default_path: Path | None = None) -> Path:
     configured = get_engine_settings_store().get_engine(engine_id).model_dir
-    return Path(configured) if configured else default_path
+    default_model_dir = get_engine_models_dir(engine_id)
+    if configured:
+        configured_path = Path(configured)
+        if is_project_model_path(configured_path):
+            return configured_path
+    return default_model_dir
 
 
 def is_engine_enabled(engine_id: str) -> bool:

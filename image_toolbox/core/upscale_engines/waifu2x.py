@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import re
 import subprocess
-import tempfile
 from pathlib import Path
 
-from PIL import Image
-
 from image_toolbox.core.engine_settings import resolve_executable_path, resolve_model_root
+from image_toolbox.core.paths import get_engine_models_dir, get_project_root
 from image_toolbox.core.upscale_engines.base import BaseUpscaleEngine
 from image_toolbox.core.upscale_engines.types import (
     ENGINE_NOT_FOUND,
@@ -27,15 +25,16 @@ from image_toolbox.core.upscale_engines.types import (
 )
 
 
-WAIFU2X_ROOT = Path(__file__).resolve().parents[3] / "ai超分参考文件" / "waifu2x-extension-gui" / "waifu2x-ncnn-vulkan"
+WAIFU2X_ROOT = get_project_root() / "engines" / "waifu2x-ncnn-vulkan"
 WAIFU2X_EXE = WAIFU2X_ROOT / "waifu2x-ncnn-vulkan_waifu2xEX.exe"
 WAIFU2X_FP16_EXE = WAIFU2X_ROOT / "waifu2x-ncnn-vulkan-fp16p_waifu2xEX.exe"
 WAIFU2X_LOW_MEMORY_TILE = 128
 
 MODEL_ALIASES = {
-    "cunet": "models-cunet",
-    "anime_style_art_rgb": "models-upconv_7_anime_style_art_rgb",
-    "anime_style_art": "models-upconv_7_anime_style_art_rgb",
+    "cunet": "cunet",
+    "upconv_7": "upconv_7",
+    "anime_style_art_rgb": "anime_style_art_rgb",
+    "anime_style_art": "anime_style_art_rgb",
 }
 
 
@@ -65,7 +64,7 @@ class Waifu2xEngine(BaseUpscaleEngine):
 
     @property
     def models_path(self) -> Path:
-        return resolve_model_root(self.engine_id, WAIFU2X_ROOT)
+        return resolve_model_root(self.engine_id, get_engine_models_dir("waifu2x"))
 
     def _model_dir(self, model_name: str) -> Path:
         return self.models_path / MODEL_ALIASES.get(model_name, model_name)
@@ -75,7 +74,7 @@ class Waifu2xEngine(BaseUpscaleEngine):
             raise FileNotFoundError(f"{ENGINE_NOT_FOUND}：找不到 Waifu2x 可执行文件：{WAIFU2X_EXE}")
         if not self.models_path.exists():
             raise FileNotFoundError(f"{MODEL_NOT_FOUND}：找不到 Waifu2x 模型根目录：{self.models_path}")
-        if config.model_name not in {model.name for model in self.supported_models}:
+        if config.model_name not in {model.name for model in self.supported_models} and not config.model_name.startswith("custom/"):
             raise ValueError(f"{INVALID_CONFIG}：不支持的 Waifu2x 模型：{config.model_name}")
         model_dir = self._model_dir(config.model_name)
         if not model_dir.exists():
@@ -147,7 +146,13 @@ class Waifu2xEngine(BaseUpscaleEngine):
         for model in self.supported_models:
             if self._model_dir(model.name).exists():
                 available_models.append(model)
-        return available_models or list(self.supported_models)
+        custom_root = self.models_path / "custom"
+        if custom_root.exists():
+            for model_dir in custom_root.iterdir():
+                if model_dir.is_dir() and any(model_dir.glob("*.param")) and any(model_dir.glob("*.bin")):
+                    model_id = f"custom/{model_dir.name}"
+                    available_models.append(UpscaleModel(model_id, model_dir.name, "导入到项目模型库的自定义模型。"))
+        return available_models
 
     def get_model_path(self, model_id: str) -> Path | None:
         return self._model_dir(model_id)
@@ -192,51 +197,6 @@ class Waifu2xEngine(BaseUpscaleEngine):
         output = completed.stdout or ""
         if "waifu2x-ncnn-vulkan" not in output.lower():
             self._health_cache = False, "Waifu2x 启动检查失败。"
-            return self._health_cache
-
-        try:
-            with tempfile.TemporaryDirectory(prefix="hea_waifu2x_health_") as temp_dir:
-                temp_root = Path(temp_dir)
-                probe_input = temp_root / "probe.png"
-                probe_output = temp_root / "probe_out.png"
-                Image.new("RGB", (2, 2), (24, 40, 72)).save(probe_input)
-                probe = subprocess.run(
-                    [
-                        str(self.executable_path),
-                        "-i",
-                        str(probe_input),
-                        "-o",
-                        str(probe_output),
-                        "-n",
-                        "-1",
-                        "-s",
-                        "1",
-                        "-t",
-                        "128",
-                        "-m",
-                        str(self._model_dir("cunet").resolve()),
-                        "-g",
-                        "auto",
-                        "-j",
-                        "1:1:1",
-                        "-f",
-                        "png",
-                    ],
-                    cwd=WAIFU2X_ROOT,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=20,
-                    check=False,
-                )
-                if probe.returncode != 0 or not probe_output.exists():
-                    engine_error = self.parse_error(probe.stdout or "", probe.returncode)
-                    self._health_cache = False, engine_error.user_message
-                    return self._health_cache
-        except Exception as exc:
-            self._health_cache = False, f"Vulkan 检查失败：{exc}"
             return self._health_cache
 
         self._health_cache = True, ""

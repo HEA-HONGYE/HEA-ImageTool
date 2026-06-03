@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QTableWidget,
@@ -22,6 +24,8 @@ from PySide6.QtWidgets import (
 )
 
 from image_toolbox.core.engine_settings import EngineSettings, ModelSettings, get_engine_settings_store
+from image_toolbox.core.model_library import detect_external_dependencies, import_custom_model, migrate_model_library
+from image_toolbox.core.paths import get_engine_models_dir, get_models_root
 from image_toolbox.core.upscale_engines import DEFAULT_ENGINE_MANAGER
 from image_toolbox.ui.widgets import NoWheelComboBox as QComboBox
 from image_toolbox.ui.widgets import NoWheelSpinBox as QSpinBox
@@ -60,6 +64,7 @@ class EngineSettingsPanel(QWidget):
         layout.addWidget(title)
         layout.addWidget(hint)
         layout.addWidget(self._build_top_bar())
+        layout.addWidget(self._build_model_library_bar())
 
         self.tabs = QTabWidget()
         engines = {engine.engine_id: engine for engine in DEFAULT_ENGINE_MANAGER.list_engines()}
@@ -95,6 +100,29 @@ class EngineSettingsPanel(QWidget):
         row.addWidget(video_combo, 1)
         row.addWidget(optimize_button)
         row.addWidget(help_button)
+        return group
+
+    def _build_model_library_bar(self) -> QWidget:
+        group = QGroupBox("项目模型库")
+        row = QHBoxLayout(group)
+        path_label = QLabel(f"项目模型库：{get_models_root()}")
+        path_label.setObjectName("MutedText")
+        open_button = QPushButton("打开模型库")
+        migrate_button = QPushButton("迁移模型库")
+        check_button = QPushButton("检查外部依赖")
+        import_button = QPushButton("导入当前引擎模型")
+        restore_button = QPushButton("恢复当前引擎默认路径")
+        open_button.clicked.connect(self._open_model_library)
+        migrate_button.clicked.connect(self._migrate_model_library)
+        check_button.clicked.connect(self._check_external_dependencies)
+        import_button.clicked.connect(self._import_current_engine_model)
+        restore_button.clicked.connect(lambda: self._restore_default_model_dir(self._current_engine_id()))
+        row.addWidget(path_label, 1)
+        row.addWidget(open_button)
+        row.addWidget(migrate_button)
+        row.addWidget(check_button)
+        row.addWidget(import_button)
+        row.addWidget(restore_button)
         return group
 
     def _build_engine_tab(self, engine) -> QWidget:
@@ -328,6 +356,85 @@ class EngineSettingsPanel(QWidget):
         layout.addWidget(multi_button)
         return row
 
+    def _open_model_library(self) -> None:
+        root = get_models_root()
+        root.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(root)))
+
+    def _migrate_model_library(self) -> None:
+        source = QFileDialog.getExistingDirectory(self, "选择外部素材库根目录", str(Path.cwd()))
+        if not source:
+            return
+        stats = migrate_model_library(Path(source), "skip")
+        for engine_id, widgets in self.widgets.items():
+            widgets["model_dir"].setText(str(get_engine_models_dir(engine_id)))
+            self.store.get_engine(engine_id).model_dir = str(get_engine_models_dir(engine_id))
+            self.scan_models(engine_id)
+        self.store.save()
+        message = f"迁移完成：复制 {stats.copied}，跳过 {stats.skipped}，失败 {stats.failed}"
+        if self.status_label:
+            self.status_label.setText(message)
+        QMessageBox.information(self, "迁移模型库", message + "\n\n" + "\n".join(stats.logs[-20:]))
+
+    def _check_external_dependencies(self) -> None:
+        self.save_settings()
+        try:
+            import json
+
+            data = json.loads(self.store.path.read_text(encoding="utf-8")) if self.store.path.exists() else {}
+        except Exception:
+            data = {}
+        findings = detect_external_dependencies(data)
+        if not findings:
+            QMessageBox.information(self, "检查外部依赖", "未发现配置中的外部素材库模型路径。")
+            return
+        QMessageBox.warning(
+            self,
+            "检查外部依赖",
+            "发现以下外部素材库路径，请迁移模型后恢复默认项目模型路径：\n\n" + "\n".join(findings[:30]),
+        )
+
+    def _restore_default_model_dir(self, engine_id: str) -> None:
+        widgets = self.widgets.get(engine_id)
+        if not widgets:
+            return
+        default_dir = get_engine_models_dir(engine_id)
+        widgets["model_dir"].setText(str(default_dir))
+        settings = self.store.get_engine(engine_id)
+        settings.model_dir = str(default_dir)
+        settings.extra_params.pop("legacy_model_dir", None)
+        settings.extra_params.pop("needs_model_migration", None)
+        self.store.save()
+        self.scan_models(engine_id)
+
+    def _current_engine_id(self) -> str:
+        if not self.tabs:
+            return ENGINE_TAB_ORDER[0]
+        index = self.tabs.currentIndex()
+        if 0 <= index < len(ENGINE_TAB_ORDER):
+            return ENGINE_TAB_ORDER[index]
+        return ENGINE_TAB_ORDER[0]
+
+    def _import_current_engine_model(self) -> None:
+        self._import_custom_model(self._current_engine_id())
+
+    def _import_custom_model(self, engine_id: str) -> None:
+        selected, _ = QFileDialog.getOpenFileName(self, "选择模型文件", str(Path.cwd()), "Model Files (*.bin *.param *.onnx *.pth *.model *.weights);;All Files (*)")
+        if not selected:
+            directory = QFileDialog.getExistingDirectory(self, "或选择模型文件夹", str(Path.cwd()))
+            selected = directory
+        if not selected:
+            return
+        model_id, stats = import_custom_model(engine_id, Path(selected))
+        model = self.store.get_model(engine_id, model_id)
+        model.display_name = model_id
+        model.path = str(get_engine_models_dir(engine_id) / model_id)
+        model.enabled = True
+        model.note = "手动导入到项目模型库"
+        self.store.save()
+        self.scan_models(engine_id)
+        QMessageBox.information(self, "导入模型", f"导入完成：{model_id}\n复制 {stats.copied}，跳过 {stats.skipped}，失败 {stats.failed}")
+
     def _browse_path(self, edit: QLineEdit, mode: str) -> None:
         if mode == "file":
             selected, _ = QFileDialog.getOpenFileName(self, "选择引擎程序", edit.text() or str(Path.cwd()), "Executable (*.exe)")
@@ -414,7 +521,14 @@ class EngineSettingsPanel(QWidget):
             settings = self.store.get_engine(engine.engine_id)
             settings.enabled = widgets["enabled"].isChecked()
             settings.executable_path = widgets["exe"].text().strip()
-            settings.model_dir = widgets["model_dir"].text().strip()
+            configured_model_dir = Path(widgets["model_dir"].text().strip() or str(get_engine_models_dir(engine.engine_id)))
+            if configured_model_dir.resolve().is_relative_to(get_models_root().resolve()):
+                settings.model_dir = str(configured_model_dir)
+            else:
+                settings.extra_params["legacy_model_dir"] = str(configured_model_dir)
+                settings.extra_params["needs_model_migration"] = True
+                settings.model_dir = str(get_engine_models_dir(engine.engine_id))
+                widgets["model_dir"].setText(settings.model_dir)
             settings.default_model = widgets["model_combo"].currentData() or ""
             settings.default_scale = widgets["scale_combo"].currentData() or 0
             settings.default_tile = widgets["tile"].value()

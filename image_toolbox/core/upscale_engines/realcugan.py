@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from image_toolbox.core.engine_settings import resolve_executable_path, resolve_model_root
+from image_toolbox.core.paths import get_engine_models_dir, get_project_root
 from image_toolbox.core.upscale_engines.base import BaseUpscaleEngine
 from image_toolbox.core.upscale_engines.types import (
     ENGINE_NOT_FOUND,
@@ -25,7 +26,7 @@ from image_toolbox.core.upscale_engines.types import (
 )
 
 
-REALCUGAN_ROOT = Path(__file__).resolve().parents[3] / "ai超分参考文件" / "waifu2x-extension-gui" / "realcugan-ncnn-vulkan"
+REALCUGAN_ROOT = get_project_root() / "engines" / "realcugan-ncnn-vulkan"
 REALCUGAN_EXE = REALCUGAN_ROOT / "realcugan-ncnn-vulkan_W2xEX.exe"
 REALCUGAN_FALLBACK_EXE = REALCUGAN_ROOT / "realcugan-ncnn-vulkan.exe"
 REALCUGAN_LOW_MEMORY_TILE = 128
@@ -58,7 +59,7 @@ class RealCuganEngine(BaseUpscaleEngine):
 
     @property
     def models_path(self) -> Path:
-        return resolve_model_root(self.engine_id, REALCUGAN_ROOT)
+        return resolve_model_root(self.engine_id, get_engine_models_dir("realcugan"))
 
     def _model_dir(self, model_name: str) -> Path:
         return self.models_path / model_name
@@ -68,7 +69,7 @@ class RealCuganEngine(BaseUpscaleEngine):
             raise FileNotFoundError(f"{ENGINE_NOT_FOUND}：找不到 Real-CUGAN 可执行文件：{REALCUGAN_EXE}")
         if not self.models_path.exists():
             raise FileNotFoundError(f"{MODEL_NOT_FOUND}：找不到 Real-CUGAN 模型根目录：{self.models_path}")
-        if config.model_name not in {model.name for model in self.supported_models}:
+        if config.model_name not in {model.name for model in self.supported_models} and not config.model_name.startswith("custom/"):
             raise ValueError(f"{INVALID_CONFIG}：不支持的 Real-CUGAN 模型：{config.model_name}")
         model_dir = self._model_dir(config.model_name)
         if not model_dir.exists():
@@ -77,6 +78,8 @@ class RealCuganEngine(BaseUpscaleEngine):
             raise FileNotFoundError(f"{MODEL_NOT_FOUND}：Real-CUGAN 模型文件不完整：{model_dir}")
         if config.scale not in self.supported_scales:
             raise ValueError(f"{INVALID_CONFIG}：Real-CUGAN 当前支持 2x、3x、4x。")
+        if config.model_name.startswith("custom/"):
+            return
         if config.model_name == "models-nose" and config.scale != 2:
             raise ValueError(f"{INVALID_CONFIG}：models-nose 当前保守只开放 2x。")
         if config.model_name == "models-nose" and config.noise_level != 0:
@@ -149,7 +152,13 @@ class RealCuganEngine(BaseUpscaleEngine):
 
     def get_model_info(self) -> list[UpscaleModel]:
         available_models = [model for model in self.supported_models if self._model_dir(model.name).exists()]
-        return available_models or list(self.supported_models)
+        custom_root = self.models_path / "custom"
+        if custom_root.exists():
+            for model_dir in custom_root.iterdir():
+                if model_dir.is_dir() and any(model_dir.glob("*.param")) and any(model_dir.glob("*.bin")):
+                    model_id = f"custom/{model_dir.name}"
+                    available_models.append(UpscaleModel(model_id, model_dir.name, "导入到项目模型库的自定义模型。"))
+        return available_models
 
     def get_model_path(self, model_id: str) -> Path | None:
         return self._model_dir(model_id)

@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from image_toolbox.core.engine_settings import resolve_executable_path, resolve_model_root
+from image_toolbox.core.paths import get_engine_models_dir, get_project_root
 from image_toolbox.core.upscale_engines.base import BaseUpscaleEngine
 from image_toolbox.core.upscale_engines.types import (
     ENGINE_NOT_FOUND,
@@ -23,7 +24,7 @@ from image_toolbox.core.upscale_engines.types import (
 )
 
 
-REALSR_ROOT = Path(__file__).resolve().parents[3] / "ai超分参考文件" / "waifu2x-extension-gui" / "realsr-ncnn-vulkan"
+REALSR_ROOT = get_project_root() / "engines" / "realsr-ncnn-vulkan"
 REALSR_EXE = REALSR_ROOT / "realsr-ncnn-vulkan_waifu2xEX.exe"
 REALSR_FALLBACK_EXE = REALSR_ROOT / "realsr-ncnn-vulkan.exe"
 REALSR_LOW_MEMORY_TILE = 128
@@ -53,7 +54,7 @@ class RealSrEngine(BaseUpscaleEngine):
 
     @property
     def models_path(self) -> Path:
-        return resolve_model_root(self.engine_id, REALSR_ROOT)
+        return resolve_model_root(self.engine_id, get_engine_models_dir("realsr"))
 
     def _model_dir(self, model_name: str) -> Path:
         return self.models_path / model_name
@@ -61,7 +62,7 @@ class RealSrEngine(BaseUpscaleEngine):
     def validate_config(self, config: UpscaleConfig) -> None:
         if not self.executable_path.exists():
             raise FileNotFoundError(f"{ENGINE_NOT_FOUND}：找不到 RealSR 可执行文件：{REALSR_EXE}")
-        if config.model_name not in {model.name for model in self.supported_models}:
+        if config.model_name not in {model.name for model in self.supported_models} and not config.model_name.startswith("custom/"):
             raise ValueError(f"{INVALID_CONFIG}：不支持的 RealSR 模型：{config.model_name}")
         model_dir = self._model_dir(config.model_name)
         if not model_dir.exists():
@@ -124,7 +125,13 @@ class RealSrEngine(BaseUpscaleEngine):
 
     def get_model_info(self) -> list[UpscaleModel]:
         available = [model for model in self.supported_models if self._model_dir(model.name).exists()]
-        return available or list(self.supported_models)
+        custom_root = self.models_path / "custom"
+        if custom_root.exists():
+            for model_dir in custom_root.iterdir():
+                if model_dir.is_dir() and (model_dir / "x4.param").exists() and (model_dir / "x4.bin").exists():
+                    model_id = f"custom/{model_dir.name}"
+                    available.append(UpscaleModel(model_id, model_dir.name, "导入到项目模型库的自定义模型。"))
+        return available
 
     def get_model_path(self, model_id: str) -> Path | None:
         return self._model_dir(model_id)
