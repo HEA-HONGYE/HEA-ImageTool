@@ -4,6 +4,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from image_toolbox.core.engine_settings import resolve_executable_path, resolve_model_root
 from image_toolbox.core.upscale_engines.base import BaseUpscaleEngine
 from image_toolbox.core.upscale_engines.types import (
     ENGINE_NOT_FOUND,
@@ -52,11 +53,12 @@ class RealCuganEngine(BaseUpscaleEngine):
 
     @property
     def executable_path(self) -> Path:
-        return REALCUGAN_EXE if REALCUGAN_EXE.exists() else REALCUGAN_FALLBACK_EXE
+        default = REALCUGAN_EXE if REALCUGAN_EXE.exists() else REALCUGAN_FALLBACK_EXE
+        return resolve_executable_path(self.engine_id, default)
 
     @property
     def models_path(self) -> Path:
-        return REALCUGAN_ROOT
+        return resolve_model_root(self.engine_id, REALCUGAN_ROOT)
 
     def _model_dir(self, model_name: str) -> Path:
         return self.models_path / model_name
@@ -148,6 +150,9 @@ class RealCuganEngine(BaseUpscaleEngine):
     def get_model_info(self) -> list[UpscaleModel]:
         available_models = [model for model in self.supported_models if self._model_dir(model.name).exists()]
         return available_models or list(self.supported_models)
+
+    def get_model_path(self, model_id: str) -> Path | None:
+        return self._model_dir(model_id)
 
     def get_noise_options(self) -> list[EngineOption]:
         return [

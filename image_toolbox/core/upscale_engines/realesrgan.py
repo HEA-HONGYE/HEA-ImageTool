@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from image_toolbox.core.engine_settings import resolve_executable_path, resolve_model_root
 from image_toolbox.core.upscale_engines.base import BaseUpscaleEngine
 from image_toolbox.core.upscale_engines.types import (
     ENGINE_NOT_FOUND,
@@ -46,11 +47,11 @@ class RealEsrganEngine(BaseUpscaleEngine):
 
     @property
     def executable_path(self) -> Path:
-        return REALESRGAN_EXE
+        return resolve_executable_path(self.engine_id, REALESRGAN_EXE)
 
     @property
     def models_path(self) -> Path:
-        return REALESRGAN_MODELS
+        return resolve_model_root(self.engine_id, REALESRGAN_MODELS)
 
     def validate_config(self, config: UpscaleConfig) -> None:
         if not self.executable_path.exists():
@@ -112,6 +113,9 @@ class RealEsrganEngine(BaseUpscaleEngine):
 
     def get_model_info(self) -> list[UpscaleModel]:
         return list(self.supported_models)
+
+    def get_model_path(self, model_id: str) -> Path | None:
+        return self.models_path / f"{model_id}.param"
 
     def get_info(self) -> EngineInfo:
         available = True

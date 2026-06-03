@@ -14,3 +14,5 @@ dist/
 *.bin
 *.param
 *.tmp
+engine_settings.json
+hea_engine_settings*.json

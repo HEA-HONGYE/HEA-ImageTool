@@ -12,6 +12,7 @@ from image_toolbox.core.super_resolution import SuperResolutionSummary
 from image_toolbox.core.tasks import ImageBatchTask
 from image_toolbox.features.compression import CompressionFeature
 from image_toolbox.features.conversion import ConversionFeature
+from image_toolbox.features.engine_settings import EngineSettingsPanel
 from image_toolbox.features.home import HomePanel
 from image_toolbox.features.rename import RenameFeature
 from image_toolbox.features.resize import ResizeFeature
@@ -64,6 +65,7 @@ class MainWindow(QMainWindow):
         self._add_page("home", self._build_home())
         for key, feature in self.features.items():
             self._add_page(key, feature.build_panel())
+        self._add_page("engine_settings", EngineSettingsPanel())
         content.addWidget(self.stack, 1)
 
         self.file_panel = FilePanel()
@@ -99,6 +101,7 @@ class MainWindow(QMainWindow):
         self._add_nav_button(layout, "super_resolution", "AI 超分")
         self._add_nav_button(layout, "watermark", "批量加水印")
         self._add_nav_button(layout, "rename", "批量重命名")
+        self._add_nav_button(layout, "engine_settings", "引擎设置")
         layout.addStretch()
 
         self.run_button = QPushButton("开始处理")
@@ -177,6 +180,8 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(self.page_keys.index(key))
         for button_key, button in self.nav_buttons.items():
             button.setChecked(button_key == key)
+        if key == "super_resolution" and hasattr(self.features.get("super_resolution"), "refresh_from_engine_settings"):
+            self.features["super_resolution"].refresh_from_engine_settings()
         self._notify_file_context_changed()
 
     def run_current_feature(self) -> None:
@@ -187,6 +192,9 @@ class MainWindow(QMainWindow):
         key = self.page_keys[self.stack.currentIndex()]
         if key == "home":
             self._log("请先选择左侧的功能模块。")
+            return
+        if key == "engine_settings":
+            self._log("引擎设置页用于管理引擎和模型，不执行图片处理。")
             return
 
         files = list(self.file_panel.files)

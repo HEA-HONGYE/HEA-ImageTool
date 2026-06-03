@@ -12,6 +12,7 @@ from PIL import Image
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
 from image_toolbox.core.upscale_engines import DEFAULT_ENGINE_MANAGER
+from image_toolbox.core.engine_settings import is_engine_enabled, is_model_enabled
 from image_toolbox.core.upscale_engines.types import (
     CANCELLED,
     ENGINE_NOT_FOUND,
@@ -207,6 +208,10 @@ def classify_failure(exc: Exception, output: str = "") -> FailureReason:
 def validate_super_resolution_inputs(files: list[Path], settings: SuperResolutionSettings) -> None:
     if not files:
         raise ValueError("请先添加图片文件。")
+    if not is_engine_enabled(settings.engine_id):
+        raise ValueError("当前引擎未启用，请到“引擎设置”中启用该引擎。")
+    if not is_model_enabled(settings.engine_id, settings.model_name):
+        raise ValueError("当前模型已禁用，请到“引擎设置”中启用该模型。")
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     try:
         test_file = settings.output_dir / ".hea_write_test"

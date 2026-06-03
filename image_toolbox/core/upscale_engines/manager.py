@@ -8,6 +8,7 @@ from image_toolbox.core.upscale_engines.realsr import RealSrEngine
 from image_toolbox.core.upscale_engines.srmd import SrmdEngine
 from image_toolbox.core.upscale_engines.types import EngineInfo
 from image_toolbox.core.upscale_engines.waifu2x import Waifu2xEngine
+from image_toolbox.core.engine_settings import is_engine_enabled
 
 
 class EngineManager:
@@ -24,6 +25,9 @@ class EngineManager:
 
     def list_engines(self) -> list[BaseUpscaleEngine]:
         return list(self._engines.values())
+
+    def list_enabled_engines(self) -> list[BaseUpscaleEngine]:
+        return [engine for engine in self.list_engines() if is_engine_enabled(engine.engine_id)]
 
     def list_engine_info(self) -> list[EngineInfo]:
         return [engine.get_info() for engine in self.list_engines()]

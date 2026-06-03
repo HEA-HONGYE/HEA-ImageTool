@@ -56,3 +56,12 @@ class BaseUpscaleEngine(ABC):
 
     def get_syncgap_options(self) -> list[EngineOption]:
         return []
+
+    def scan_models(self) -> list[UpscaleModel]:
+        return self.get_model_info()
+
+    def get_model_path(self, model_id: str) -> Path | None:
+        return None
+
+    def recommendation(self) -> str:
+        return self.description

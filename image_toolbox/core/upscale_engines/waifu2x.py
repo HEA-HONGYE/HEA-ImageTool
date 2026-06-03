@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from image_toolbox.core.engine_settings import resolve_executable_path, resolve_model_root
 from image_toolbox.core.upscale_engines.base import BaseUpscaleEngine
 from image_toolbox.core.upscale_engines.types import (
     ENGINE_NOT_FOUND,
@@ -59,11 +60,12 @@ class Waifu2xEngine(BaseUpscaleEngine):
 
     @property
     def executable_path(self) -> Path:
-        return WAIFU2X_EXE if WAIFU2X_EXE.exists() else WAIFU2X_FP16_EXE
+        default = WAIFU2X_EXE if WAIFU2X_EXE.exists() else WAIFU2X_FP16_EXE
+        return resolve_executable_path(self.engine_id, default)
 
     @property
     def models_path(self) -> Path:
-        return WAIFU2X_ROOT
+        return resolve_model_root(self.engine_id, WAIFU2X_ROOT)
 
     def _model_dir(self, model_name: str) -> Path:
         return self.models_path / MODEL_ALIASES.get(model_name, model_name)
@@ -146,6 +148,9 @@ class Waifu2xEngine(BaseUpscaleEngine):
             if self._model_dir(model.name).exists():
                 available_models.append(model)
         return available_models or list(self.supported_models)
+
+    def get_model_path(self, model_id: str) -> Path | None:
+        return self._model_dir(model_id)
 
     def get_noise_options(self) -> list[EngineOption]:
         return [

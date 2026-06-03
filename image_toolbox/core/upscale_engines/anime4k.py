@@ -4,6 +4,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from image_toolbox.core.engine_settings import resolve_executable_path
 from image_toolbox.core.upscale_engines.base import BaseUpscaleEngine
 from image_toolbox.core.upscale_engines.types import (
     ENGINE_NOT_FOUND,
@@ -38,7 +39,7 @@ class Anime4kEngine(BaseUpscaleEngine):
 
     @property
     def executable_path(self) -> Path:
-        return ANIME4K_EXE
+        return resolve_executable_path(self.engine_id, ANIME4K_EXE)
 
     def validate_config(self, config: UpscaleConfig) -> None:
         if not self.executable_path.exists():
@@ -91,6 +92,9 @@ class Anime4kEngine(BaseUpscaleEngine):
 
     def get_model_info(self) -> list[UpscaleModel]:
         return list(self.supported_models)
+
+    def get_model_path(self, model_id: str) -> Path | None:
+        return ANIME4K_ROOT
 
     def health_check(self) -> tuple[bool, str]:
         if self._health_cache is not None:

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from image_toolbox.core.config import AppConfig
+from image_toolbox.core.engine_settings import get_engine_settings_store, is_engine_enabled, is_model_enabled
 from image_toolbox.core.super_resolution import (
     SuperResolutionBatchTask,
     SuperResolutionSettings,
@@ -38,6 +39,7 @@ class SuperResolutionFeature(ToolFeature):
 
     def __init__(self) -> None:
         self.config = AppConfig(self.key)
+        self.engine_settings_store = get_engine_settings_store()
         self.engine_combo: QComboBox | None = None
         self.preset_combo: QComboBox | None = None
         self.model_combo: QComboBox | None = None
@@ -78,12 +80,9 @@ class SuperResolutionFeature(ToolFeature):
         form.setSpacing(14)
 
         self.engine_combo = QComboBox()
-        for info in DEFAULT_ENGINE_MANAGER.list_engine_info():
-            label = info.display_name if info.available else f"{info.display_name}（不可用）"
-            self.engine_combo.addItem(label, info.engine_id)
-        self.engine_combo.setCurrentIndex(max(0, self.engine_combo.findData(self.config.get("engine_id", "realesrgan"))))
         self.engine_combo.currentIndexChanged.connect(self._on_engine_changed)
         form.addRow("引擎", self.engine_combo)
+        self.refresh_from_engine_settings()
 
         self.preset_combo = QComboBox()
         self.preset_combo.addItem("自定义", "")
@@ -174,6 +173,23 @@ class SuperResolutionFeature(ToolFeature):
         self._refresh_engine_options()
         return panel
 
+    def refresh_from_engine_settings(self) -> None:
+        if not self.engine_combo:
+            return
+        current_engine = self.engine_combo.currentData() or self.config.get("engine_id", "realesrgan")
+        self.engine_combo.blockSignals(True)
+        self.engine_combo.clear()
+        for engine in DEFAULT_ENGINE_MANAGER.list_enabled_engines():
+            info = engine.get_info()
+            label = info.display_name if info.available else f"{info.display_name}（不可用）"
+            self.engine_combo.addItem(label, info.engine_id)
+        index = self.engine_combo.findData(current_engine)
+        if index < 0:
+            index = 0
+        self.engine_combo.setCurrentIndex(index)
+        self.engine_combo.blockSignals(False)
+        self._refresh_engine_options()
+
     def create_processor(self, files: list[Path]) -> Callable[[Path, Callable[[str], None]], Path]:
         raise NotImplementedError("AI 超分使用专用任务执行。")
 
@@ -245,19 +261,27 @@ class SuperResolutionFeature(ToolFeature):
     def _refresh_engine_options(self) -> None:
         if not self.engine_combo or not self.model_combo or not self.scale_combo or not self.format_combo:
             return
+        if self.engine_combo.count() == 0:
+            if self.engine_info_label:
+                self.engine_info_label.setText("没有启用的超分引擎，请到“引擎设置”中启用。")
+            return
         engine_id = self.engine_combo.currentData() or "realesrgan"
         engine = DEFAULT_ENGINE_MANAGER.get_engine(engine_id)
+        engine_settings = self.engine_settings_store.get_engine(engine_id)
         info = engine.get_info()
 
-        saved_model = self.config.get("model_name", engine.get_model_info()[0].name)
+        models = [model for model in engine.get_model_info() if is_model_enabled(engine_id, model.name)]
+        if not models:
+            models = []
+        saved_model = engine_settings.default_model or self.config.get("model_name", models[0].name if models else "")
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
-        for model in engine.get_model_info():
+        for model in models:
             self.model_combo.addItem(model.display_name, model.name)
         self.model_combo.setCurrentIndex(max(0, self.model_combo.findData(saved_model)))
         self.model_combo.blockSignals(False)
 
-        saved_scale = self.config.get("scale", engine.supported_scales[-1], int)
+        saved_scale = engine_settings.default_scale or self.config.get("scale", engine.supported_scales[-1], int)
         self.scale_combo.blockSignals(True)
         self.scale_combo.clear()
         for scale in engine.supported_scales:
@@ -265,7 +289,7 @@ class SuperResolutionFeature(ToolFeature):
         self.scale_combo.setCurrentIndex(max(0, self.scale_combo.findData(saved_scale)))
         self.scale_combo.blockSignals(False)
 
-        saved_format = self.config.get("format", "original")
+        saved_format = engine_settings.default_output_format or self.config.get("format", "original")
         self.format_combo.blockSignals(True)
         self.format_combo.clear()
         self.format_combo.addItem("保留原格式", "original")
@@ -276,15 +300,17 @@ class SuperResolutionFeature(ToolFeature):
 
         if self.tile_spin:
             self.tile_spin.setEnabled(engine.supports_tile)
+            self.tile_spin.setValue(engine_settings.default_tile)
         if self.low_memory_checkbox:
             self.low_memory_checkbox.setEnabled(engine.supports_tile)
+            self.low_memory_checkbox.setChecked(engine_settings.low_memory_default)
         if self.noise_combo:
             self.noise_combo.blockSignals(True)
             self.noise_combo.clear()
             noise_options = engine.get_noise_options()
             for option in noise_options:
                 self.noise_combo.addItem(option.label, option.value)
-            saved_noise = self.config.get("noise_level", 0, int)
+            saved_noise = engine_settings.default_noise_level if engine.supports_noise else 0
             self.noise_combo.setCurrentIndex(max(0, self.noise_combo.findData(saved_noise)))
             self.noise_combo.setEnabled(bool(noise_options) and getattr(engine, "supports_noise", False))
             self.noise_combo.blockSignals(False)
@@ -294,11 +320,13 @@ class SuperResolutionFeature(ToolFeature):
             syncgap_options = engine.get_syncgap_options()
             for option in syncgap_options:
                 self.syncgap_combo.addItem(option.label, option.value)
-            saved_syncgap = self.config.get("syncgap_mode", 2, int)
+            saved_syncgap = engine_settings.syncgap_mode if engine.supports_syncgap else 2
             self.syncgap_combo.setCurrentIndex(max(0, self.syncgap_combo.findData(saved_syncgap)))
             self.syncgap_combo.setEnabled(bool(syncgap_options) and getattr(engine, "supports_syncgap", False))
             self.syncgap_combo.blockSignals(False)
         status = "√ 可用" if info.available else f"× 不可用：{info.unavailable_reason}"
+        if not is_engine_enabled(engine_id):
+            status = "已禁用"
         if self.engine_info_label:
             self.engine_info_label.setText(f"{status}：{info.display_name}\n{info.description}")
         self._on_format_changed()
@@ -308,6 +336,15 @@ class SuperResolutionFeature(ToolFeature):
             return
         preset = next((item for item in UPSCALE_PRESETS if item.preset_id == self.preset_combo.currentData()), None)
         if not preset:
+            return
+        if not is_engine_enabled(preset.engine_id):
+            self._update_preview(lambda message: None)
+            if self.engine_info_label:
+                self.engine_info_label.setText(f"预设对应引擎已禁用：{preset.engine_id}。请到“引擎设置”中启用。")
+            return
+        if not is_model_enabled(preset.engine_id, preset.model_name):
+            if self.engine_info_label:
+                self.engine_info_label.setText(f"预设对应模型已禁用：{preset.model_name}。请到“引擎设置”中启用。")
             return
         if self.engine_combo:
             self.engine_combo.setCurrentIndex(max(0, self.engine_combo.findData(preset.engine_id)))

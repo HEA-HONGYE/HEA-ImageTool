@@ -4,6 +4,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from image_toolbox.core.engine_settings import resolve_executable_path, resolve_model_root
 from image_toolbox.core.upscale_engines.base import BaseUpscaleEngine
 from image_toolbox.core.upscale_engines.types import (
     ENGINE_NOT_FOUND,
@@ -47,11 +48,12 @@ class RealSrEngine(BaseUpscaleEngine):
 
     @property
     def executable_path(self) -> Path:
-        return REALSR_EXE if REALSR_EXE.exists() else REALSR_FALLBACK_EXE
+        default = REALSR_EXE if REALSR_EXE.exists() else REALSR_FALLBACK_EXE
+        return resolve_executable_path(self.engine_id, default)
 
     @property
     def models_path(self) -> Path:
-        return REALSR_ROOT
+        return resolve_model_root(self.engine_id, REALSR_ROOT)
 
     def _model_dir(self, model_name: str) -> Path:
         return self.models_path / model_name
@@ -123,6 +125,9 @@ class RealSrEngine(BaseUpscaleEngine):
     def get_model_info(self) -> list[UpscaleModel]:
         available = [model for model in self.supported_models if self._model_dir(model.name).exists()]
         return available or list(self.supported_models)
+
+    def get_model_path(self, model_id: str) -> Path | None:
+        return self._model_dir(model_id)
 
     def health_check(self) -> tuple[bool, str]:
         if self._health_cache is not None:

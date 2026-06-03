@@ -4,6 +4,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from image_toolbox.core.engine_settings import resolve_executable_path, resolve_model_root
 from image_toolbox.core.upscale_engines.base import BaseUpscaleEngine
 from image_toolbox.core.upscale_engines.types import (
     ENGINE_NOT_FOUND,
@@ -50,11 +51,12 @@ class SrmdEngine(BaseUpscaleEngine):
 
     @property
     def executable_path(self) -> Path:
-        return SRMD_EXE if SRMD_EXE.exists() else SRMD_FALLBACK_EXE
+        default = SRMD_EXE if SRMD_EXE.exists() else SRMD_FALLBACK_EXE
+        return resolve_executable_path(self.engine_id, default)
 
     @property
     def models_path(self) -> Path:
-        return SRMD_MODELS
+        return resolve_model_root(self.engine_id, SRMD_MODELS)
 
     def validate_config(self, config: UpscaleConfig) -> None:
         if not self.executable_path.exists():
@@ -131,6 +133,9 @@ class SrmdEngine(BaseUpscaleEngine):
         if self.models_path.exists():
             return list(self.supported_models)
         return []
+
+    def get_model_path(self, model_id: str) -> Path | None:
+        return self.models_path
 
     def get_noise_options(self) -> list[EngineOption]:
         return [
