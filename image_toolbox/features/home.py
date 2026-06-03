@@ -19,7 +19,7 @@ class HomePanel(QWidget):
         title.setObjectName("HeroTitle")
         version = QLabel(f"Version {APP_VERSION}")
         version.setObjectName("MutedText")
-        intro = QLabel("V3.3.5 增加引擎设置与模型管理，可统一管理引擎路径、模型启用状态和默认参数。")
+        intro = QLabel("V3.3.6 重构引擎设置界面，按图片引擎 Tab 管理模型、路径、默认参数和高级选项。")
         intro.setWordWrap(True)
         intro.setObjectName("IntroText")
 

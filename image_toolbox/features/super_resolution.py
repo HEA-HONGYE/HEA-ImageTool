@@ -176,7 +176,7 @@ class SuperResolutionFeature(ToolFeature):
     def refresh_from_engine_settings(self) -> None:
         if not self.engine_combo:
             return
-        current_engine = self.engine_combo.currentData() or self.config.get("engine_id", "realesrgan")
+        current_engine = self.engine_combo.currentData() or self.engine_settings_store.global_settings.default_image_engine or self.config.get("engine_id", "realesrgan")
         self.engine_combo.blockSignals(True)
         self.engine_combo.clear()
         for engine in DEFAULT_ENGINE_MANAGER.list_enabled_engines():
@@ -304,6 +304,10 @@ class SuperResolutionFeature(ToolFeature):
         if self.low_memory_checkbox:
             self.low_memory_checkbox.setEnabled(engine.supports_tile)
             self.low_memory_checkbox.setChecked(engine_settings.low_memory_default)
+        if self.tta_checkbox:
+            self.tta_checkbox.setChecked(bool(engine_settings.extra_params.get("use_tta", False)))
+        if self.gpu_edit:
+            self.gpu_edit.setText(str(engine_settings.extra_params.get("gpu_id", self.engine_settings_store.global_settings.gpu_id)))
         if self.noise_combo:
             self.noise_combo.blockSignals(True)
             self.noise_combo.clear()

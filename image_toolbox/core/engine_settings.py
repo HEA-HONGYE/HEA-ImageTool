@@ -43,9 +43,24 @@ class EngineSettings:
     models: dict[str, ModelSettings] = field(default_factory=dict)
 
 
+@dataclass
+class GlobalEngineSettings:
+    default_image_engine: str = "realesrgan"
+    default_animated_engine: str = ""
+    default_video_engine: str = ""
+    image_threads: int = 4
+    animated_threads: int = 8
+    video_threads: int = 8
+    gpu_id: str = "auto"
+    multi_gpu_enabled: bool = False
+    multi_gpu_id: str = "0"
+    multi_gpu_tile: int = 128
+
+
 class EngineSettingsStore:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or default_settings_path()
+        self.global_settings = GlobalEngineSettings()
         self.engines: dict[str, EngineSettings] = {}
         self.load()
 
@@ -58,6 +73,8 @@ class EngineSettingsStore:
         except (OSError, json.JSONDecodeError):
             self.engines = {}
             return
+        global_raw = data.get("global", {})
+        self.global_settings = GlobalEngineSettings(**{k: v for k, v in global_raw.items() if k in GlobalEngineSettings.__dataclass_fields__})
         engines: dict[str, EngineSettings] = {}
         for engine_id, raw_engine in data.get("engines", {}).items():
             models = {
@@ -70,7 +87,11 @@ class EngineSettingsStore:
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"version": 1, "engines": {engine_id: asdict(settings) for engine_id, settings in self.engines.items()}}
+        payload = {
+            "version": 2,
+            "global": asdict(self.global_settings),
+            "engines": {engine_id: asdict(settings) for engine_id, settings in self.engines.items()},
+        }
         self.path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def get_engine(self, engine_id: str) -> EngineSettings:
