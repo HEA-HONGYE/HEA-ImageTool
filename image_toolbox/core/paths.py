@@ -22,6 +22,10 @@ def get_engine_models_dir(engine_id: str) -> Path:
     return get_models_root() / engine_id
 
 
+def get_video_interpolation_models_dir(engine_id: str) -> Path:
+    return get_models_root() / "video_interpolation" / engine_id
+
+
 def ensure_project_model_dirs() -> None:
     layout = {
         "realesrgan": ["realesrgan-x4plus", "realesrgan-x4plus-anime", "realesrnet-x4plus", "custom"],
@@ -30,6 +34,8 @@ def ensure_project_model_dirs() -> None:
         "realsr": ["models-DF2K", "models-DF2K_JPEG", "custom"],
         "srmd": ["srmd", "srmdnf", "custom"],
         "anime4k": ["custom"],
+        "video_interpolation": ["rife", "dain", "cain", "ifrnet"],
+        "video_upscale": ["realesrgan", "realcugan", "waifu2x", "realsr", "srmd"],
     }
     root = get_models_root()
     root.mkdir(parents=True, exist_ok=True)
@@ -57,6 +63,7 @@ def looks_like_external_asset_path(path: str | Path) -> bool:
     markers = [
         "ai超分参考",
         "ai瓒呭垎",
+        "素材库",
         "waifu2x-extension-gui",
         "realesrga",
         "realesrgan-ncnn-vulkan",
@@ -64,5 +71,9 @@ def looks_like_external_asset_path(path: str | Path) -> bool:
         "realcugan-ncnn-vulkan",
         "realsr-ncnn-vulkan",
         "srmd-ncnn-vulkan",
+        "rife-ncnn-vulkan",
+        "dain-ncnn-vulkan",
+        "cain-ncnn-vulkan",
+        "ifrnet-ncnn-vulkan",
     ]
     return any(marker.lower() in text for marker in markers)

@@ -8,6 +8,7 @@ from image_toolbox.core.paths import (
     ensure_project_model_dirs,
     get_engine_models_dir,
     get_models_root,
+    get_video_interpolation_models_dir,
     is_project_model_path,
     looks_like_external_asset_path,
 )
@@ -25,6 +26,15 @@ MODEL_FILE_SUFFIXES = {
     ".dat",
 }
 
+STRICT_MODEL_FILE_SUFFIXES = {
+    ".bin",
+    ".param",
+    ".onnx",
+    ".pth",
+    ".model",
+    ".weights",
+}
+
 KNOWN_MODEL_DIRS = {
     "realesrgan": ["realesrgan-x4plus", "realesrgan-x4plus-anime", "realesrnet-x4plus"],
     "waifu2x": ["cunet", "upconv_7", "anime_style_art_rgb", "models-cunet", "models-upconv_7", "models-upconv_7_anime_style_art_rgb"],
@@ -32,6 +42,10 @@ KNOWN_MODEL_DIRS = {
     "realsr": ["models-DF2K", "models-DF2K_JPEG"],
     "srmd": ["srmd", "srmdnf", "models-srmd"],
     "anime4k": ["Anime4K", "anime4k"],
+    "video_interpolation/rife": ["models", "models-v2", "models-v3", "models-v4", "models-v4.6", "models-rife"],
+    "video_interpolation/dain": ["models", "model"],
+    "video_interpolation/cain": ["models", "model"],
+    "video_interpolation/ifrnet": ["models", "model"],
 }
 
 MODEL_DIR_ALIASES = {
@@ -39,6 +53,13 @@ MODEL_DIR_ALIASES = {
     ("waifu2x", "models-upconv_7"): "upconv_7",
     ("waifu2x", "models-upconv_7_anime_style_art_rgb"): "anime_style_art_rgb",
     ("srmd", "models-srmd"): "",
+}
+
+INTERPOLATION_ENGINE_DIRS = {
+    "rife": "rife-ncnn-vulkan",
+    "dain": "dain-ncnn-vulkan",
+    "cain": "cain-ncnn-vulkan",
+    "ifrnet": "ifrnet-ncnn-vulkan",
 }
 
 
@@ -51,6 +72,10 @@ class CopyStats:
 
 
 def project_model_dir_for(engine_id: str, model_id: str = "") -> Path:
+    if engine_id.startswith("video_interpolation/"):
+        interpolation_id = engine_id.split("/", 1)[1]
+        root = get_video_interpolation_models_dir(interpolation_id)
+        return root / model_id if model_id else root
     root = get_engine_models_dir(engine_id)
     return root / model_id if model_id else root
 
@@ -67,6 +92,14 @@ def _contains_model_files(path: Path) -> bool:
     return any(child.is_file() and child.suffix.lower() in MODEL_FILE_SUFFIXES for child in path.rglob("*"))
 
 
+def _contains_strict_model_files(path: Path) -> bool:
+    if path.is_file():
+        return path.suffix.lower() in STRICT_MODEL_FILE_SUFFIXES
+    if not path.is_dir():
+        return False
+    return any(child.is_file() and child.suffix.lower() in STRICT_MODEL_FILE_SUFFIXES for child in path.rglob("*"))
+
+
 def discover_model_sources(source_root: Path) -> list[tuple[str, str, Path]]:
     source_root = source_root.resolve()
     discovered: dict[tuple[str, str, Path], tuple[str, str, Path]] = {}
@@ -76,7 +109,20 @@ def discover_model_sources(source_root: Path) -> list[tuple[str, str, Path]]:
     candidates.extend(path for path in source_root.rglob("*") if path.is_dir())
     for path in candidates:
         name = path.name
+        for interpolation_id, engine_dir in INTERPOLATION_ENGINE_DIRS.items():
+            normalized_parts = {part.lower() for part in path.parts}
+            if engine_dir not in normalized_parts:
+                continue
+            if path.name.lower() == engine_dir:
+                continue
+            if not _contains_strict_model_files(path):
+                continue
+            engine_id = f"video_interpolation/{interpolation_id}"
+            discovered[(engine_id, path.name, path)] = (engine_id, path.name, path)
+
         for engine_id, known_names in KNOWN_MODEL_DIRS.items():
+            if engine_id.startswith("video_interpolation/"):
+                continue
             if name not in known_names:
                 continue
             if not _contains_model_files(path):
@@ -133,11 +179,43 @@ def migrate_model_library(source_root: Path, strategy: str = "skip") -> CopyStat
         stats.logs.append(f"未识别模型目录：{source_root}")
         return stats
     for engine_id, model_id, source in sources:
-        target = get_engine_models_dir(engine_id)
+        target = project_model_dir_for(engine_id)
         if model_id:
             target = target / model_id
         _copy_path(source, target, strategy, stats)
     return stats
+
+
+def get_video_upscale_model_root(engine_id: str) -> Path:
+    return get_engine_models_dir(engine_id)
+
+
+def get_interpolation_model_root(engine_id: str) -> Path:
+    return get_video_interpolation_models_dir(engine_id)
+
+
+def validate_interpolation_model_root(engine_id: str) -> Path:
+    model_root = get_interpolation_model_root(engine_id)
+    if not model_root.exists() or not _contains_model_files(model_root):
+        raise FileNotFoundError(f"请先从素材库导入 {engine_id.upper()} 模型到项目模型库：{model_root}")
+    if not is_project_model_path(model_root):
+        raise ValueError(f"{engine_id.upper()} 模型路径必须位于项目模型库：{model_root}")
+    return model_root
+
+
+def build_rife_command(executable_path: Path, input_frames: Path, output_frames: Path, scale: int = 2) -> list[str]:
+    model_root = validate_interpolation_model_root("rife")
+    return [
+        str(executable_path),
+        "-i",
+        str(input_frames.resolve()),
+        "-o",
+        str(output_frames.resolve()),
+        "-m",
+        str(model_root.resolve()),
+        "-n",
+        str(scale),
+    ]
 
 
 def import_custom_model(engine_id: str, source: Path, model_name: str | None = None, strategy: str = "rename") -> tuple[str, CopyStats]:

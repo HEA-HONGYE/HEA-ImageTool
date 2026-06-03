@@ -98,7 +98,7 @@ class MainWindow(QMainWindow):
         self._add_nav_button(layout, "compress", "图片压缩")
         self._add_nav_button(layout, "convert", "格式转换")
         self._add_nav_button(layout, "resize", "批量改尺寸")
-        self._add_nav_button(layout, "super_resolution", "AI 超分")
+        self._add_nav_button(layout, "super_resolution", "智能媒体增强")
         self._add_nav_button(layout, "watermark", "批量加水印")
         self._add_nav_button(layout, "rename", "批量重命名")
         self._add_nav_button(layout, "engine_settings", "引擎设置")
@@ -182,6 +182,8 @@ class MainWindow(QMainWindow):
             button.setChecked(button_key == key)
         if key == "super_resolution" and hasattr(self.features.get("super_resolution"), "refresh_from_engine_settings"):
             self.features["super_resolution"].refresh_from_engine_settings()
+        if hasattr(self, "file_panel"):
+            self.file_panel.setVisible(key != "super_resolution")
         self._notify_file_context_changed()
 
     def run_current_feature(self) -> None:
@@ -197,14 +199,17 @@ class MainWindow(QMainWindow):
             self._log("引擎设置页用于管理引擎和模型，不执行图片处理。")
             return
 
-        files = list(self.file_panel.files)
+        feature = self.features[key]
+        files = list(feature.get_workbench_files()) if hasattr(feature, "get_workbench_files") else list(self.file_panel.files)
         if not files:
-            self._log("请先添加图片文件。")
+            self._log("请先添加要处理的文件。")
             return
 
-        feature = self.features[key]
         self.progress_bar.setValue(0)
-        self.file_panel.reset_statuses()
+        if hasattr(feature, "reset_statuses"):
+            feature.reset_statuses()
+        else:
+            self.file_panel.reset_statuses()
         try:
             task = feature.create_task(files)
             if task is None:
@@ -214,16 +219,20 @@ class MainWindow(QMainWindow):
             self._log(f"参数错误：{exc}")
             return
 
-        self._start_task(key, feature.title, files, task)
+        self._start_task(key, feature.title, files, task, feature)
 
-    def _start_task(self, key: str, title: str, files: list[Path], task) -> None:
+    def _start_task(self, key: str, title: str, files: list[Path], task, feature=None) -> None:
+        feature = feature or self.features.get(key)
         task.signals.log.connect(self._log)
         if hasattr(task.signals, "debug"):
             task.signals.debug.connect(self._log_debug)
         task.signals.progress.connect(self.progress_bar.setValue)
         if hasattr(task.signals, "current_progress"):
             task.signals.current_progress.connect(self._set_current_progress)
-        task.signals.file_status.connect(self.file_panel.set_file_status)
+        if hasattr(feature, "set_file_status"):
+            task.signals.file_status.connect(feature.set_file_status)
+        else:
+            task.signals.file_status.connect(self.file_panel.set_file_status)
         task.signals.failed.connect(self._task_failed)
         if key == "super_resolution":
             task.signals.finished.connect(self._super_resolution_finished)
@@ -269,8 +278,12 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._log(f"参数错误：{exc}")
             return
-        self.file_panel.clear_files()
-        self.file_panel.add_files(self.last_failed_files)
+        if hasattr(feature, "clear_files") and hasattr(feature, "add_files"):
+            feature.clear_files()
+            feature.add_files(self.last_failed_files)
+        else:
+            self.file_panel.clear_files()
+            self.file_panel.add_files(self.last_failed_files)
         self.progress_bar.setValue(0)
         self._start_task(self.last_failed_feature_key, f"{feature.title}（重试失败项）", self.last_failed_files, task)
 
@@ -299,7 +312,7 @@ class MainWindow(QMainWindow):
         self.last_failed_files = [item.source for item in summary.failed_items]
         self.last_failed_feature_key = "super_resolution" if self.last_failed_files else None
         self._log(
-            f"AI 超分完成。总数量 {summary.total}，成功 {summary.success_count}，失败 {summary.failed_count}，跳过 {summary.skipped_count}，耗时 {elapsed}。"
+            f"智能媒体增强完成。总数量 {summary.total}，成功 {summary.success_count}，失败 {summary.failed_count}，跳过 {summary.skipped_count}，耗时 {elapsed}。"
         )
         self._log(f"输出目录：{summary.output_dir}")
         if summary.failed_items:
@@ -341,6 +354,9 @@ class MainWindow(QMainWindow):
     def _notify_file_context_changed(self) -> None:
         key = self.page_keys[self.stack.currentIndex()] if hasattr(self, "stack") and self.page_keys else ""
         if key in self.features:
+            if hasattr(self.features[key], "get_workbench_files"):
+                self.features[key].update_file_context([], None, self._log)
+                return
             selected_file = self.file_panel.selected_file() if hasattr(self, "file_panel") else None
             self.features[key].update_file_context(list(self.file_panel.files), selected_file, self._log)
 

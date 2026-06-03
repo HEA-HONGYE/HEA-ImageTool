@@ -19,7 +19,7 @@ class HomePanel(QWidget):
         title.setObjectName("HeroTitle")
         version = QLabel(f"Version {APP_VERSION}")
         version.setObjectName("MutedText")
-        intro = QLabel("V3.3.7 建立项目内置模型库，支持迁移外部素材模型并让运行路径与素材库解耦。")
+        intro = QLabel("V3.3.8 新增智能媒体增强工作台，统一预留图片、动图、视频超分与 AI 插帧处理入口。")
         intro.setWordWrap(True)
         intro.setObjectName("IntroText")
 
@@ -35,7 +35,7 @@ class HomePanel(QWidget):
             ("图片压缩", "降低图片体积，保留常用格式输出。", "compress"),
             ("格式转换", "批量转换 JPG、PNG、WEBP、BMP 等格式。", "convert"),
             ("批量改尺寸", "按比例或指定宽高缩放，可保持原比例。", "resize"),
-            ("AI 超分", "使用本地 Real-ESRGAN 引擎批量高清放大图片。", "super_resolution"),
+            ("智能媒体增强", "统一管理图片超分、动图增强、视频超分与 AI 插帧工作流。", "super_resolution"),
             ("批量加水印", "添加文字或图片水印，控制位置与透明度。", "watermark"),
             ("批量重命名", "组合前缀、后缀、原名和自动编号。", "rename"),
         ]

@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
@@ -12,6 +14,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -32,14 +36,22 @@ from image_toolbox.ui.widgets import NoWheelComboBox as QComboBox
 from image_toolbox.ui.widgets import NoWheelSpinBox as QSpinBox
 
 
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+ANIMATED_EXTENSIONS = {".gif", ".apng"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
+
+
 class SuperResolutionFeature(ToolFeature):
     key = "super_resolution"
-    title = "AI 超分"
-    description = "调用本地超分引擎批量放大图片，适合照片、动漫与素材高清化。"
+    title = "智能媒体增强"
+    description = "统一处理图片超分、动图增强与视频超分/AI 插帧。v3.3.8 先开放图片增强，动图和视频参数预留。"
 
     def __init__(self) -> None:
         self.config = AppConfig(self.key)
         self.engine_settings_store = get_engine_settings_store()
+        self.file_table: QTableWidget | None = None
+        self.file_count_label: QLabel | None = None
+        self.mode_combo: QComboBox | None = None
         self.engine_combo: QComboBox | None = None
         self.preset_combo: QComboBox | None = None
         self.model_combo: QComboBox | None = None
@@ -58,120 +70,295 @@ class SuperResolutionFeature(ToolFeature):
         self.engine_info_label: QLabel | None = None
         self.size_label: QLabel | None = None
         self.output_info_label: QLabel | None = None
+        self.animated_hint_label: QLabel | None = None
+        self.video_hint_label: QLabel | None = None
         self._files: list[Path] = []
+        self._statuses: list[str] = []
         self._selected_file: Path | None = None
 
     def build_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(18)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
 
-        header = QLabel(self.title)
-        header.setObjectName("PanelTitle")
+        header = QHBoxLayout()
+        title_block = QVBoxLayout()
+        title = QLabel(self.title)
+        title.setObjectName("PanelTitle")
         hint = QLabel(self.description)
         hint.setObjectName("MutedText")
         hint.setWordWrap(True)
-        layout.addWidget(header)
-        layout.addWidget(hint)
+        title_block.addWidget(title)
+        title_block.addWidget(hint)
+        header.addLayout(title_block, 1)
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem("图片增强", "image")
+        self.mode_combo.addItem("动图增强（预留）", "animated")
+        self.mode_combo.addItem("视频增强与 AI 插帧（预留）", "video")
+        header.addWidget(QLabel("任务类型"))
+        header.addWidget(self.mode_combo)
+        layout.addLayout(header)
 
-        group = QGroupBox("超分参数")
-        form = QFormLayout(group)
-        form.setSpacing(14)
+        layout.addWidget(self._build_file_area(), 3)
+        layout.addLayout(self._build_toolbar())
 
-        self.engine_combo = QComboBox()
-        self.engine_combo.currentIndexChanged.connect(self._on_engine_changed)
-        form.addRow("引擎", self.engine_combo)
+        settings_row = QHBoxLayout()
+        settings_row.setSpacing(10)
+        settings_row.addWidget(self._build_resolution_group(), 1)
+        settings_row.addWidget(self._build_media_group(), 2)
+        settings_row.addWidget(self._build_output_group(), 3)
+        layout.addLayout(settings_row)
+
+        enhancement_row = QHBoxLayout()
+        enhancement_row.setSpacing(10)
+        enhancement_row.addWidget(self._build_upscale_group(), 3)
+        enhancement_row.addWidget(self._build_interpolation_group(), 1)
+        layout.addLayout(enhancement_row)
+
+        layout.addWidget(self._build_preview_group())
         self.refresh_from_engine_settings()
+        return panel
 
+    def _build_file_area(self) -> QWidget:
+        group = QGroupBox("文件列表")
+        layout = QVBoxLayout(group)
+        self.file_table = QTableWidget(0, 6)
+        self.file_table.setHorizontalHeaderLabels(["文件名", "类型", "状态", "完整路径", "原始尺寸", "预计输出尺寸"])
+        self.file_table.verticalHeader().setVisible(False)
+        self.file_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.file_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.file_table.currentCellChanged.connect(lambda row, *_args: self._select_row(row))
+        layout.addWidget(self.file_table)
+        return group
+
+    def _build_toolbar(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        self.file_count_label = QLabel("文件数量：0")
+        self.file_count_label.setObjectName("CardTitle")
+        add_button = QPushButton("添加文件")
+        remove_button = QPushButton("删除选中")
+        clear_button = QPushButton("清空")
+        open_output_button = QPushButton("打开输出目录")
+        add_button.clicked.connect(self.choose_files)
+        remove_button.clicked.connect(self.remove_selected_file)
+        clear_button.clicked.connect(self.clear_files)
+        open_output_button.clicked.connect(self._open_output_from_page)
+        for button in [remove_button, clear_button, open_output_button]:
+            button.setObjectName("GhostButton")
+        row.addWidget(self.file_count_label)
+        row.addWidget(add_button)
+        row.addWidget(remove_button)
+        row.addWidget(clear_button)
+        row.addSpacing(16)
+        row.addWidget(QLabel("快捷预设"))
         self.preset_combo = QComboBox()
         self.preset_combo.addItem("自定义", "")
         for preset in UPSCALE_PRESETS:
             self.preset_combo.addItem(preset.display_name, preset.preset_id)
         self.preset_combo.currentIndexChanged.connect(self._apply_selected_preset)
-        form.addRow("预设", self.preset_combo)
+        row.addWidget(self.preset_combo, 1)
+        row.addWidget(QLabel("引擎"))
+        self.engine_combo = QComboBox()
+        self.engine_combo.currentIndexChanged.connect(self._on_engine_changed)
+        row.addWidget(self.engine_combo, 1)
+        row.addStretch()
+        row.addWidget(open_output_button)
+        return row
 
-        self.engine_info_label = QLabel("")
-        self.engine_info_label.setObjectName("MutedText")
-        self.engine_info_label.setWordWrap(True)
-        form.addRow("引擎状态", self.engine_info_label)
-
-        self.model_combo = QComboBox()
-        form.addRow("模型", self.model_combo)
-
+    def _build_resolution_group(self) -> QWidget:
+        group = QGroupBox("尺寸与分辨率")
+        form = QFormLayout(group)
         self.scale_combo = QComboBox()
         self.scale_combo.currentIndexChanged.connect(self._refresh_preview)
-        form.addRow("倍率", self.scale_combo)
+        form.addRow("放大倍率", self.scale_combo)
+        self.low_memory_checkbox = QCheckBox("低显存模式：速度较慢，但更稳定")
+        self.low_memory_checkbox.stateChanged.connect(self._refresh_preview)
+        form.addRow("稳定性", self.low_memory_checkbox)
+        apply_all = QCheckBox("应用到全部")
+        apply_all.setChecked(True)
+        form.addRow("应用范围", apply_all)
+        return group
 
+    def _build_media_group(self) -> QWidget:
+        group = QGroupBox("图片 / 动图 / 视频参数")
+        form = QFormLayout(group)
         self.format_combo = QComboBox()
         self.format_combo.currentIndexChanged.connect(self._on_format_changed)
-        form.addRow("输出格式", self.format_combo)
-
-        self.noise_combo = QComboBox()
-        form.addRow("降噪等级", self.noise_combo)
-
-        self.syncgap_combo = QComboBox()
-        form.addRow("SyncGap", self.syncgap_combo)
-
+        form.addRow("静态图片保存为", self.format_combo)
         self.quality_spin = QSpinBox()
         self.quality_spin.setRange(1, 100)
         self.quality_spin.setValue(self.config.get("quality", 95, int))
         self.quality_spin.valueChanged.connect(self._refresh_preview)
-        form.addRow("JPG / WEBP 质量", self.quality_spin)
+        form.addRow("图片质量", self.quality_spin)
+        self.animated_hint_label = QLabel("动图增强、逐帧超分和帧补偿将在后续版本开放。")
+        self.animated_hint_label.setObjectName("MutedText")
+        self.video_hint_label = QLabel("视频超分、AI 插帧、音频保留和封装流程已预留入口，当前版本不执行视频任务。")
+        self.video_hint_label.setObjectName("MutedText")
+        self.animated_hint_label.setWordWrap(True)
+        self.video_hint_label.setWordWrap(True)
+        form.addRow("动图", self.animated_hint_label)
+        form.addRow("视频", self.video_hint_label)
+        return group
 
-        self.tile_spin = QSpinBox()
-        self.tile_spin.setRange(0, 2048)
-        self.tile_spin.setSingleStep(32)
-        self.tile_spin.setValue(self.config.get("tile_size", 0, int))
-        self.tile_spin.valueChanged.connect(self._refresh_preview)
-        form.addRow("Tile / 0 自动", self.tile_spin)
-
-        self.gpu_edit = QLineEdit(self.config.get("gpu_id", "auto"))
-        form.addRow("GPU", self.gpu_edit)
-
-        self.threads_edit = QLineEdit(self.config.get("threads", "1:2:2"))
-        form.addRow("线程", self.threads_edit)
-
-        self.tta_checkbox = QCheckBox("启用 TTA 增强，速度会更慢")
-        self.tta_checkbox.setChecked(self.config.get("use_tta", False, bool))
-        form.addRow("增强", self.tta_checkbox)
-
-        self.low_memory_checkbox = QCheckBox("低显存模式：速度较慢，但更稳定，适合大图或显存较小的电脑。")
-        self.low_memory_checkbox.setChecked(self.config.get("low_memory_mode", False, bool))
-        self.low_memory_checkbox.stateChanged.connect(self._refresh_preview)
-        form.addRow("稳定性", self.low_memory_checkbox)
-
-        self.conflict_combo = QComboBox()
-        self.conflict_combo.addItem("自动重命名", "rename")
-        self.conflict_combo.addItem("跳过", "skip")
-        self.conflict_combo.addItem("覆盖", "overwrite")
-        self.conflict_combo.setCurrentIndex(max(0, self.conflict_combo.findData(self.config.get("conflict_strategy", "rename"))))
-        form.addRow("文件已存在", self.conflict_combo)
-
+    def _build_output_group(self) -> QWidget:
+        group = QGroupBox("输出文件夹")
+        form = QFormLayout(group)
         self.output_edit = QLineEdit(self.config.get("output_dir", str(Path.cwd() / "output")))
         browse_button = QPushButton("选择")
         browse_button.clicked.connect(self._choose_output)
         output_row = QHBoxLayout()
         output_row.addWidget(self.output_edit)
         output_row.addWidget(browse_button)
-        form.addRow("保存到", output_row)
+        form.addRow("输出到", output_row)
+        self.conflict_combo = QComboBox()
+        self.conflict_combo.addItem("自动重命名", "rename")
+        self.conflict_combo.addItem("跳过", "skip")
+        self.conflict_combo.addItem("覆盖", "overwrite")
+        self.conflict_combo.setCurrentIndex(max(0, self.conflict_combo.findData(self.config.get("conflict_strategy", "rename"))))
+        form.addRow("文件已存在", self.conflict_combo)
+        keep_name = QCheckBox("保留原文件名")
+        keep_name.setEnabled(False)
+        auto_folder = QCheckBox("自动创建输出文件夹")
+        auto_folder.setChecked(True)
+        form.addRow("命名", keep_name)
+        form.addRow("目录", auto_folder)
+        return group
 
-        layout.addWidget(group)
+    def _build_upscale_group(self) -> QWidget:
+        group = QGroupBox("AI 超分与增强参数")
+        form = QFormLayout(group)
+        self.engine_info_label = QLabel("")
+        self.engine_info_label.setObjectName("MutedText")
+        self.engine_info_label.setWordWrap(True)
+        form.addRow("引擎状态", self.engine_info_label)
+        self.model_combo = QComboBox()
+        form.addRow("模型", self.model_combo)
+        self.noise_combo = QComboBox()
+        form.addRow("降噪等级", self.noise_combo)
+        self.syncgap_combo = QComboBox()
+        form.addRow("SyncGap", self.syncgap_combo)
+        self.tile_spin = QSpinBox()
+        self.tile_spin.setRange(0, 2048)
+        self.tile_spin.setSingleStep(32)
+        self.tile_spin.setValue(self.config.get("tile_size", 0, int))
+        self.tile_spin.valueChanged.connect(self._refresh_preview)
+        form.addRow("Tile / 0 自动", self.tile_spin)
+        self.gpu_edit = QLineEdit(self.config.get("gpu_id", "auto"))
+        form.addRow("GPU", self.gpu_edit)
+        self.threads_edit = QLineEdit(self.config.get("threads", "1:2:2"))
+        form.addRow("线程", self.threads_edit)
+        self.tta_checkbox = QCheckBox("启用 TTA 增强，速度会更慢")
+        self.tta_checkbox.setChecked(self.config.get("use_tta", False, bool))
+        form.addRow("增强", self.tta_checkbox)
+        return group
 
-        info_group = QGroupBox("预计输出信息")
-        info_layout = QVBoxLayout(info_group)
-        self.size_label = QLabel("请在右侧任务队列添加图片。")
+    def _build_interpolation_group(self) -> QWidget:
+        group = QGroupBox("AI 插帧")
+        form = QFormLayout(group)
+        frame_mode = QComboBox()
+        frame_mode.addItem("不插帧", "off")
+        frame_mode.addItem("2x（预留）", "2x")
+        frame_mode.addItem("4x（预留）", "4x")
+        frame_mode.setEnabled(False)
+        form.addRow("帧率倍率", frame_mode)
+        hint = QLabel("RIFE / DAIN / CAIN 等视频插帧引擎将在后续视频版本接入。")
+        hint.setObjectName("MutedText")
+        hint.setWordWrap(True)
+        form.addRow("状态", hint)
+        return group
+
+    def _build_preview_group(self) -> QWidget:
+        group = QGroupBox("预计输出信息")
+        layout = QVBoxLayout(group)
+        self.size_label = QLabel("请添加文件。")
         self.size_label.setObjectName("MutedText")
         self.size_label.setWordWrap(True)
         self.output_info_label = QLabel("文件大小受图片内容、格式和质量影响较大，仅供参考。")
         self.output_info_label.setObjectName("MutedText")
         self.output_info_label.setWordWrap(True)
-        info_layout.addWidget(self.size_label)
-        info_layout.addWidget(self.output_info_label)
-        layout.addWidget(info_group)
-        layout.addStretch()
-        self._refresh_engine_options()
-        return panel
+        layout.addWidget(self.size_label)
+        layout.addWidget(self.output_info_label)
+        return group
+
+    def choose_files(self) -> None:
+        selected, _ = QFileDialog.getOpenFileNames(
+            None,
+            "选择媒体文件",
+            str(Path.cwd()),
+            "Media Files (*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff *.gif *.apng *.mp4 *.mov *.mkv *.avi *.webm *.m4v)",
+        )
+        self.add_files([Path(item) for item in selected])
+
+    def add_files(self, paths: list[Path]) -> None:
+        existing = {path.resolve() for path in self._files}
+        for path in paths:
+            if not path.exists() or path.resolve() in existing:
+                continue
+            if self._media_type(path) == "未知":
+                continue
+            self._files.append(path)
+            self._statuses.append("待处理")
+            existing.add(path.resolve())
+        self._refresh_file_table()
+
+    def clear_files(self) -> None:
+        self._files.clear()
+        self._statuses.clear()
+        self._selected_file = None
+        self._refresh_file_table()
+
+    def remove_selected_file(self) -> None:
+        if not self.file_table:
+            return
+        row = self.file_table.currentRow()
+        if row < 0 or row >= len(self._files):
+            return
+        del self._files[row]
+        del self._statuses[row]
+        self._selected_file = self._files[0] if self._files else None
+        self._refresh_file_table()
+
+    def get_workbench_files(self) -> list[Path]:
+        return list(self._files)
+
+    def reset_statuses(self) -> None:
+        for index in range(len(self._statuses)):
+            self.set_file_status(index, "待处理")
+
+    def set_file_status(self, index: int, status: str) -> None:
+        if 0 <= index < len(self._statuses):
+            self._statuses[index] = status
+            self._refresh_file_table(keep_selection=True)
+
+    def _refresh_file_table(self, keep_selection: bool = False) -> None:
+        if not self.file_table:
+            return
+        current = self.file_table.currentRow() if keep_selection else 0
+        self.file_table.setRowCount(0)
+        scale = self.scale_combo.currentData() if self.scale_combo else 4
+        for row, path in enumerate(self._files):
+            self.file_table.insertRow(row)
+            media_type = self._media_type(path)
+            original_size = self._read_size_text(path)
+            output_size = self._output_size_text(path, scale)
+            values = [path.name, media_type, self._statuses[row], str(path), original_size, output_size]
+            for col, value in enumerate(values):
+                self.file_table.setItem(row, col, QTableWidgetItem(value))
+        self.file_table.resizeColumnsToContents()
+        if self._files:
+            self.file_table.setCurrentCell(max(0, min(current, len(self._files) - 1)), 0)
+        if self.file_count_label:
+            self.file_count_label.setText(f"文件数量：{len(self._files)}")
+        self._selected_file = self._files[self.file_table.currentRow()] if self._files and self.file_table.currentRow() >= 0 else (self._files[0] if self._files else None)
+        self._update_preview()
+
+    def _select_row(self, row: int) -> None:
+        if 0 <= row < len(self._files):
+            self._selected_file = self._files[row]
+        else:
+            self._selected_file = self._files[0] if self._files else None
+        self._update_preview()
 
     def refresh_from_engine_settings(self) -> None:
         if not self.engine_combo:
@@ -184,20 +371,23 @@ class SuperResolutionFeature(ToolFeature):
             label = info.display_name if info.available else f"{info.display_name}（不可用）"
             self.engine_combo.addItem(label, info.engine_id)
         index = self.engine_combo.findData(current_engine)
-        if index < 0:
-            index = 0
-        self.engine_combo.setCurrentIndex(index)
+        self.engine_combo.setCurrentIndex(index if index >= 0 else 0)
         self.engine_combo.blockSignals(False)
         self._refresh_engine_options()
 
     def create_processor(self, files: list[Path]) -> Callable[[Path, Callable[[str], None]], Path]:
-        raise NotImplementedError("AI 超分使用专用任务执行。")
+        raise NotImplementedError("智能媒体增强使用专用任务执行。")
 
     def create_task(self, files: list[Path]) -> SuperResolutionBatchTask:
+        actual_files = self.get_workbench_files() or files
+        unsupported = [path for path in actual_files if self._media_type(path) != "图片"]
+        if unsupported:
+            names = "、".join(path.name for path in unsupported[:3])
+            raise ValueError(f"v3.3.8 当前只执行图片增强；动图和视频已预留 UI，后续版本接入。暂不支持：{names}")
         settings = self._collect_settings()
-        validate_super_resolution_inputs(files, settings)
+        validate_super_resolution_inputs(actual_files, settings)
         self._save_settings(settings)
-        return SuperResolutionBatchTask(files, settings)
+        return SuperResolutionBatchTask(actual_files, settings)
 
     def _collect_settings(self) -> SuperResolutionSettings:
         output_dir = Path(self.output_edit.text() if self.output_edit else "output")
@@ -240,8 +430,8 @@ class SuperResolutionFeature(ToolFeature):
         self.config.set("syncgap_mode", settings.syncgap_mode)
 
     def update_file_context(self, files: list[Path], selected_file: Path | None, logger: Callable[[str], None] | None = None) -> None:
-        self._files = files
-        self._selected_file = selected_file
+        if not self._files and files:
+            self.add_files(files)
         self._update_preview(logger)
 
     def get_output_dir(self) -> Path | None:
@@ -254,16 +444,21 @@ class SuperResolutionFeature(ToolFeature):
         if directory:
             self.output_edit.setText(directory)
 
+    def _open_output_from_page(self) -> None:
+        output_dir = self.get_output_dir() or Path.cwd() / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_dir.resolve())))
+
     def _on_engine_changed(self, *_args: object) -> None:
         self._refresh_engine_options()
-        self._update_preview()
+        self._refresh_file_table(keep_selection=True)
 
     def _refresh_engine_options(self) -> None:
         if not self.engine_combo or not self.model_combo or not self.scale_combo or not self.format_combo:
             return
         if self.engine_combo.count() == 0:
             if self.engine_info_label:
-                self.engine_info_label.setText("没有启用的超分引擎，请到“引擎设置”中启用。")
+                self.engine_info_label.setText("没有启用的增强引擎，请到“引擎设置”中启用。")
             return
         engine_id = self.engine_combo.currentData() or "realesrgan"
         engine = DEFAULT_ENGINE_MANAGER.get_engine(engine_id)
@@ -271,8 +466,6 @@ class SuperResolutionFeature(ToolFeature):
         info = engine.get_info()
 
         models = [model for model in engine.get_model_info() if is_model_enabled(engine_id, model.name)]
-        if not models:
-            models = []
         saved_model = engine_settings.default_model or self.config.get("model_name", models[0].name if models else "")
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
@@ -328,9 +521,11 @@ class SuperResolutionFeature(ToolFeature):
             self.syncgap_combo.setCurrentIndex(max(0, self.syncgap_combo.findData(saved_syncgap)))
             self.syncgap_combo.setEnabled(bool(syncgap_options) and getattr(engine, "supports_syncgap", False))
             self.syncgap_combo.blockSignals(False)
-        status = "√ 可用" if info.available else f"× 不可用：{info.unavailable_reason}"
+        status = "可用" if info.available else f"不可用：{info.unavailable_reason}"
         if not is_engine_enabled(engine_id):
             status = "已禁用"
+        elif not models:
+            status = "当前引擎没有可用模型，请到引擎设置中迁移或导入模型"
         if self.engine_info_label:
             self.engine_info_label.setText(f"{status}：{info.display_name}\n{info.description}")
         self._on_format_changed()
@@ -341,14 +536,9 @@ class SuperResolutionFeature(ToolFeature):
         preset = next((item for item in UPSCALE_PRESETS if item.preset_id == self.preset_combo.currentData()), None)
         if not preset:
             return
-        if not is_engine_enabled(preset.engine_id):
-            self._update_preview(lambda message: None)
+        if not is_engine_enabled(preset.engine_id) or not is_model_enabled(preset.engine_id, preset.model_name):
             if self.engine_info_label:
-                self.engine_info_label.setText(f"预设对应引擎已禁用：{preset.engine_id}。请到“引擎设置”中启用。")
-            return
-        if not is_model_enabled(preset.engine_id, preset.model_name):
-            if self.engine_info_label:
-                self.engine_info_label.setText(f"预设对应模型已禁用：{preset.model_name}。请到“引擎设置”中启用。")
+                self.engine_info_label.setText("预设对应的引擎或模型未启用，请到“引擎设置”中检查。")
             return
         if self.engine_combo:
             self.engine_combo.setCurrentIndex(max(0, self.engine_combo.findData(preset.engine_id)))
@@ -367,13 +557,13 @@ class SuperResolutionFeature(ToolFeature):
             self.noise_combo.setCurrentIndex(max(0, self.noise_combo.findData(preset.noise_level)))
         if self.syncgap_combo:
             self.syncgap_combo.setCurrentIndex(max(0, self.syncgap_combo.findData(preset.syncgap_mode)))
-        self._update_preview()
+        self._refresh_file_table(keep_selection=True)
 
     def _on_format_changed(self, *_args: object) -> None:
         selected = self.format_combo.currentData() if self.format_combo else "original"
         if self.quality_spin:
             self.quality_spin.setEnabled(selected in {"original", "jpg", "webp"})
-        self._update_preview()
+        self._refresh_preview()
 
     def _refresh_preview(self, *_args: object) -> None:
         self._update_preview()
@@ -384,30 +574,29 @@ class SuperResolutionFeature(ToolFeature):
         if not self.size_label or not self.output_info_label:
             return
         if not self._files:
-            self.size_label.setText("请在右侧任务队列添加图片。")
-            self.output_info_label.setText("文件大小受图片内容、格式和质量影响较大，仅供参考。")
+            self.size_label.setText("请添加图片、动图或视频文件。")
+            self.output_info_label.setText("文件大小受内容、格式、倍率、质量和编码影响较大，仅供参考。")
             return
-
         selected = self._selected_file or self._files[0]
+        media_type = self._media_type(selected)
+        if media_type != "图片":
+            self.size_label.setText(f"当前参考文件：{selected.name}\n类型：{media_type}\n该类型处理流程已预留，后续版本开放执行。")
+            self.output_info_label.setText("动图和视频的输出大小受帧数、编码、插帧倍率和超分倍率影响较大，仅供参考。")
+            return
         scale = self.scale_combo.currentData() if self.scale_combo else 4
-        count_text = f"已选择 {len(self._files)} 张图片。" if len(self._files) > 1 else "已选择 1 张图片。"
         try:
             width, height, image_format = read_image_info(selected)
             output_width = width * int(scale)
             output_height = height * int(scale)
             format_text = self._preview_format_text(selected)
-            tile_text = ""
-            if self.low_memory_checkbox and self.low_memory_checkbox.isChecked():
-                engine = DEFAULT_ENGINE_MANAGER.get_engine(self.engine_combo.currentData() if self.engine_combo else "realesrgan")
-                tile_text = f"\n低显存模式已开启，将使用更保守的 Tile：{engine.get_default_tile(True)}。"
             self.size_label.setText(
-                f"{count_text}\n当前参考图片：{selected.name}\n原图尺寸：{width} × {height}（{image_format}）\n当前倍率：{scale}x\n预计输出尺寸：{output_width} × {output_height}{tile_text}"
+                f"文件数量：{len(self._files)}\n当前参考图片：{selected.name}\n原图尺寸：{width} x {height}（{image_format}）\n当前倍率：{scale}x\n预计输出尺寸：{output_width} x {output_height}"
             )
             self.output_info_label.setText(
-                f"预计输出尺寸：{output_width} × {output_height}\n输出格式：{format_text}\n文件大小受图片内容、格式和质量影响较大，仅供参考。"
+                f"预计输出尺寸：{output_width} x {output_height}\n输出格式：{format_text}\n文件大小受图片内容、格式和质量影响较大，仅供参考。"
             )
         except Exception as exc:
-            self.size_label.setText(f"{count_text}\n当前参考图片：{selected.name}\n图片读取失败，无法预估尺寸。")
+            self.size_label.setText(f"当前参考图片：{selected.name}\n图片读取失败，无法预估尺寸。")
             self.output_info_label.setText("文件大小受图片内容、格式和质量影响较大，仅供参考。")
             if logger:
                 logger(f"图片读取失败：{selected.name}，原因：{exc}")
@@ -421,3 +610,31 @@ class SuperResolutionFeature(ToolFeature):
         if output_format in {"jpg", "webp"} and self.quality_spin:
             return f"{output_format.upper()}，质量 {self.quality_spin.value()}（仅供参考）"
         return output_format.upper()
+
+    def _read_size_text(self, path: Path) -> str:
+        if self._media_type(path) != "图片":
+            return "后续识别"
+        try:
+            width, height, _fmt = read_image_info(path)
+            return f"{width} x {height}"
+        except Exception:
+            return "读取失败"
+
+    def _output_size_text(self, path: Path, scale: int) -> str:
+        if self._media_type(path) != "图片":
+            return "后续计算"
+        try:
+            width, height, _fmt = read_image_info(path)
+            return f"{width * int(scale)} x {height * int(scale)}"
+        except Exception:
+            return "未知"
+
+    def _media_type(self, path: Path) -> str:
+        suffix = path.suffix.lower()
+        if suffix in IMAGE_EXTENSIONS:
+            return "图片"
+        if suffix in ANIMATED_EXTENSIONS:
+            return "动图"
+        if suffix in VIDEO_EXTENSIONS:
+            return "视频"
+        return "未知"
