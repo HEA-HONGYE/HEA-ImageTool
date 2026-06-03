@@ -31,6 +31,7 @@ from image_toolbox.core.super_resolution import (
     read_image_info,
     validate_super_resolution_inputs,
 )
+from image_toolbox.core.tool_manager import get_tool_manager
 from image_toolbox.core.upscale_engines import DEFAULT_ENGINE_MANAGER
 from image_toolbox.core.upscale_engines.presets import UPSCALE_PRESETS
 from image_toolbox.features.base import ToolFeature
@@ -466,6 +467,11 @@ class SuperResolutionFeature(ToolFeature):
             raise ValueError("请分开执行图片任务和视频任务，当前版本暂不支持混合队列。")
         if video_files:
             settings = self._collect_video_settings()
+            tool_manager = get_tool_manager()
+            tool_manager.require_tool("ffmpeg")
+            tool_manager.require_tool("ffprobe")
+            if settings.interpolation_enabled:
+                tool_manager.require_tool("rife")
             self._save_video_settings(settings)
             return VideoMediaTask(video_files, settings)
         if self.upscale_enabled_checkbox and not self.upscale_enabled_checkbox.isChecked():

@@ -11,10 +11,10 @@ from threading import Event
 
 from PySide6.QtCore import QRunnable, Slot
 
-from image_toolbox.core.config import AppConfig
 from image_toolbox.core.ffmpeg_tools import has_audio_stream, media_fps, probe_media, require_ffmpeg_tools
 from image_toolbox.core.model_library import build_rife_command, list_interpolation_models
 from image_toolbox.core.paths import get_project_root
+from image_toolbox.core.tool_manager import get_tool_manager
 from image_toolbox.core.super_resolution import (
     SuperResolutionResult,
     SuperResolutionSettings,
@@ -53,24 +53,7 @@ def list_rife_models() -> list[str]:
 
 
 def resolve_rife_executable() -> Path:
-    configured = AppConfig("media_tools").get("rife_path", "", str)
-    candidates: list[Path] = []
-    if configured:
-        candidates.append(Path(configured))
-    project_engine_dir = get_project_root() / "engines" / "rife-ncnn-vulkan"
-    candidates.extend(
-        [
-            project_engine_dir / "rife-ncnn-vulkan.exe",
-            project_engine_dir / "rife-ncnn-vulkan_waifu2xEX.exe",
-        ]
-    )
-    found = shutil.which("rife-ncnn-vulkan")
-    if found:
-        candidates.append(Path(found))
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    raise FileNotFoundError("RIFE executable is missing. Configure rife_path or place it in engines/rife-ncnn-vulkan/.")
+    return get_tool_manager().require_tool("rife")
 
 
 def _resolve_video_output_path(source: Path, settings: VideoProcessSettings) -> Path | None:
@@ -272,6 +255,7 @@ class VideoMediaTask(QRunnable):
         if len(input_frames) < 2:
             raise RuntimeError("插帧失败：至少需要 2 帧")
         rife_exe = resolve_rife_executable()
+        self.signals.log.emit(f"使用 RIFE：{rife_exe}")
         frames_out.mkdir(parents=True, exist_ok=True)
         command = build_rife_command(
             rife_exe,
@@ -334,6 +318,8 @@ class VideoMediaTask(QRunnable):
 
     def _process_video(self, source: Path, output_path: Path, task_dir: Path, file_index: int, total_files: int) -> None:
         tools = require_ffmpeg_tools()
+        self.signals.log.emit(f"使用 FFmpeg：{tools.ffmpeg}")
+        self.signals.log.emit(f"使用 FFprobe：{tools.ffprobe}")
         self._emit_stage("读取视频信息", file_index, total_files, 5)
         probe_data = probe_media(source, tools.ffprobe)
         input_fps = media_fps(probe_data) or 30.0

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMainWindow, QMessage
 from image_toolbox import APP_NAME, APP_VERSION
 from image_toolbox.core.super_resolution import SuperResolutionSummary
 from image_toolbox.core.tasks import ImageBatchTask
+from image_toolbox.core.tool_manager import get_tool_manager
 from image_toolbox.features.compression import CompressionFeature
 from image_toolbox.features.conversion import ConversionFeature
 from image_toolbox.features.engine_settings import EngineSettingsPanel
@@ -17,6 +18,7 @@ from image_toolbox.features.home import HomePanel
 from image_toolbox.features.rename import RenameFeature
 from image_toolbox.features.resize import ResizeFeature
 from image_toolbox.features.super_resolution import SuperResolutionFeature
+from image_toolbox.features.tool_settings import ToolSettingsPanel
 from image_toolbox.features.watermark import WatermarkFeature
 from image_toolbox.ui.file_panel import FilePanel
 
@@ -66,6 +68,7 @@ class MainWindow(QMainWindow):
         for key, feature in self.features.items():
             self._add_page(key, feature.build_panel())
         self._add_page("engine_settings", EngineSettingsPanel())
+        self._add_page("tool_settings", ToolSettingsPanel())
         content.addWidget(self.stack, 1)
 
         self.file_panel = FilePanel()
@@ -77,6 +80,7 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self._build_bottom_panel())
         self.switch_page("home")
         self._set_running(False)
+        self._log_tool_health()
 
     def _build_sidebar(self) -> QWidget:
         sidebar = QFrame()
@@ -102,6 +106,7 @@ class MainWindow(QMainWindow):
         self._add_nav_button(layout, "watermark", "批量加水印")
         self._add_nav_button(layout, "rename", "批量重命名")
         self._add_nav_button(layout, "engine_settings", "引擎设置")
+        self._add_nav_button(layout, "tool_settings", "工具管理")
         layout.addStretch()
 
         self.run_button = QPushButton("开始处理")
@@ -346,6 +351,15 @@ class MainWindow(QMainWindow):
 
     def _log_debug(self, message: str) -> None:
         self._log(message)
+
+    def _log_tool_health(self) -> None:
+        health_map = get_tool_manager().refresh()
+        for tool_id in ["ffmpeg", "ffprobe", "rife"]:
+            health = health_map[tool_id]
+            if health.available and health.path:
+                self._log(f"检测到 {health.display_name}：{health.path}")
+            else:
+                self._log(f"未检测到 {health.display_name}：请到工具管理中配置或导入。")
 
     def _set_current_progress(self, message: str) -> None:
         if self.current_progress_label:

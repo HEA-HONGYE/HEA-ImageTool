@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from image_toolbox.core.config import AppConfig
-from image_toolbox.core.paths import get_project_root
+from image_toolbox.core.tool_manager import get_tool_manager
 
 
 @dataclass(frozen=True)
@@ -17,41 +15,20 @@ class FFmpegPaths:
 
 
 def _configured_tool(name: str) -> Path | None:
-    configured = AppConfig("media_tools").get(f"{name}_path", "", str)
-    if configured:
-        path = Path(configured)
-        if path.exists():
-            return path
-    return None
+    return get_tool_manager().configured_path(name)
 
 
 def _project_tool(name: str) -> Path | None:
-    executable = f"{name}.exe" if not name.lower().endswith(".exe") else name
-    path = get_project_root() / "tools" / "ffmpeg" / executable
-    return path if path.exists() else None
+    path = get_tool_manager().resolve_tool_path(name)
+    return path if path and get_tool_manager().project_tool_dir(name) in path.parents else None
 
 
 def find_tool(name: str) -> Path | None:
-    configured = _configured_tool(name)
-    if configured:
-        return configured
-    project_tool = _project_tool(name)
-    if project_tool:
-        return project_tool
-    found = shutil.which(name)
-    return Path(found) if found else None
+    return get_tool_manager().resolve_tool_path(name)
 
 
 def require_ffmpeg_tools() -> FFmpegPaths:
-    ffmpeg = find_tool("ffmpeg")
-    ffprobe = find_tool("ffprobe")
-    missing: list[str] = []
-    if ffmpeg is None:
-        missing.append("ffmpeg")
-    if ffprobe is None:
-        missing.append("ffprobe")
-    if missing:
-        raise FileNotFoundError("Missing media tool: " + ", ".join(missing))
+    ffmpeg, ffprobe = get_tool_manager().require_ffmpeg_pair()
     return FFmpegPaths(ffmpeg=ffmpeg, ffprobe=ffprobe)
 
 
