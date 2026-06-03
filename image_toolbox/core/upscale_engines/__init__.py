@@ -1,4 +1,5 @@
 from image_toolbox.core.upscale_engines.manager import DEFAULT_ENGINE_MANAGER, EngineManager
+from image_toolbox.core.upscale_engines.realcugan import RealCuganEngine
 from image_toolbox.core.upscale_engines.realesrgan import RealEsrganEngine
 from image_toolbox.core.upscale_engines.waifu2x import Waifu2xEngine
 from image_toolbox.core.upscale_engines.types import (
@@ -13,6 +14,7 @@ from image_toolbox.core.upscale_engines.types import (
     PROCESS_FAILED,
     UNKNOWN_ERROR,
     VULKAN_ERROR,
+    EngineOption,
     EngineInfo,
     UpscaleConfig,
     UpscalePreset,
@@ -26,6 +28,7 @@ __all__ = [
     "ENGINE_NOT_FOUND",
     "EngineInfo",
     "EngineManager",
+    "EngineOption",
     "GPU_MEMORY_ERROR",
     "GPU_UNSUPPORTED",
     "INPUT_NOT_FOUND",
@@ -33,6 +36,7 @@ __all__ = [
     "MODEL_NOT_FOUND",
     "OUTPUT_ERROR",
     "PROCESS_FAILED",
+    "RealCuganEngine",
     "RealEsrganEngine",
     "UNKNOWN_ERROR",
     "VULKAN_ERROR",

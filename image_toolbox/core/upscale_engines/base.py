@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from image_toolbox.core.upscale_engines.types import EngineCommand, EngineError, EngineInfo, UpscaleConfig, UpscaleModel
+from image_toolbox.core.upscale_engines.types import EngineCommand, EngineError, EngineInfo, EngineOption, UpscaleConfig, UpscaleModel
 
 
 class BaseUpscaleEngine(ABC):
@@ -17,6 +17,7 @@ class BaseUpscaleEngine(ABC):
     supports_gpu_info: bool = True
     supports_progress_parse: bool = True
     supports_noise: bool = False
+    supports_syncgap: bool = False
 
     @abstractmethod
     def validate_config(self, config: UpscaleConfig) -> None:
@@ -49,3 +50,9 @@ class BaseUpscaleEngine(ABC):
     def health_check(self) -> tuple[bool, str]:
         info = self.get_info()
         return info.available, info.unavailable_reason
+
+    def get_noise_options(self) -> list[EngineOption]:
+        return []
+
+    def get_syncgap_options(self) -> list[EngineOption]:
+        return []

@@ -19,7 +19,7 @@ class HomePanel(QWidget):
         title.setObjectName("HeroTitle")
         version = QLabel(f"Version {APP_VERSION}")
         version.setObjectName("MutedText")
-        intro = QLabel("V3.3.2 保留原有批处理框架，并接入 Real-ESRGAN 与 Waifu2x 本地超分引擎。")
+        intro = QLabel("V3.3.3 保留原有批处理框架，并接入 Real-ESRGAN、Waifu2x 与 Real-CUGAN 本地超分引擎。")
         intro.setWordWrap(True)
         intro.setObjectName("IntroText")
 

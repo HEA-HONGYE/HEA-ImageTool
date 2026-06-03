@@ -20,6 +20,7 @@ from image_toolbox.core.upscale_engines.types import (
     EngineCommand,
     EngineError,
     EngineInfo,
+    EngineOption,
     UpscaleConfig,
     UpscaleModel,
 )
@@ -145,6 +146,15 @@ class Waifu2xEngine(BaseUpscaleEngine):
             if self._model_dir(model.name).exists():
                 available_models.append(model)
         return available_models or list(self.supported_models)
+
+    def get_noise_options(self) -> list[EngineOption]:
+        return [
+            EngineOption("关闭", -1, "关闭降噪。"),
+            EngineOption("弱", 0, "轻度降噪。"),
+            EngineOption("中", 1, "中等降噪。"),
+            EngineOption("强", 2, "较强降噪。"),
+            EngineOption("极强", 3, "最强降噪。"),
+        ]
 
     def health_check(self) -> tuple[bool, str]:
         if self._health_cache is not None:

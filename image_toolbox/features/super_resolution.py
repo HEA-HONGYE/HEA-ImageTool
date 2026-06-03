@@ -44,6 +44,7 @@ class SuperResolutionFeature(ToolFeature):
         self.scale_combo: QComboBox | None = None
         self.format_combo: QComboBox | None = None
         self.noise_combo: QComboBox | None = None
+        self.syncgap_combo: QComboBox | None = None
         self.quality_spin: QSpinBox | None = None
         self.tile_spin: QSpinBox | None = None
         self.gpu_edit: QLineEdit | None = None
@@ -108,13 +109,10 @@ class SuperResolutionFeature(ToolFeature):
         form.addRow("输出格式", self.format_combo)
 
         self.noise_combo = QComboBox()
-        self.noise_combo.addItem("关闭", -1)
-        self.noise_combo.addItem("弱", 0)
-        self.noise_combo.addItem("中", 1)
-        self.noise_combo.addItem("强", 2)
-        self.noise_combo.addItem("极强", 3)
-        self.noise_combo.setCurrentIndex(max(0, self.noise_combo.findData(self.config.get("noise_level", 0, int))))
         form.addRow("降噪等级", self.noise_combo)
+
+        self.syncgap_combo = QComboBox()
+        form.addRow("SyncGap", self.syncgap_combo)
 
         self.quality_spin = QSpinBox()
         self.quality_spin.setRange(1, 100)
@@ -188,6 +186,8 @@ class SuperResolutionFeature(ToolFeature):
     def _collect_settings(self) -> SuperResolutionSettings:
         output_dir = Path(self.output_edit.text() if self.output_edit else "output")
         output_format = self.format_combo.currentData() if self.format_combo else "original"
+        noise_level = self.noise_combo.currentData() if self.noise_combo else 0
+        syncgap_mode = self.syncgap_combo.currentData() if self.syncgap_combo else 2
         return SuperResolutionSettings(
             engine_id=self.engine_combo.currentData() if self.engine_combo else "realesrgan",
             output_dir=output_dir,
@@ -203,7 +203,8 @@ class SuperResolutionFeature(ToolFeature):
             use_tta=self.tta_checkbox.isChecked() if self.tta_checkbox else False,
             low_memory_mode=self.low_memory_checkbox.isChecked() if self.low_memory_checkbox else False,
             conflict_strategy=self.conflict_combo.currentData() if self.conflict_combo else "rename",
-            noise_level=self.noise_combo.currentData() if self.noise_combo else 0,
+            noise_level=0 if noise_level is None else noise_level,
+            syncgap_mode=2 if syncgap_mode is None else syncgap_mode,
         )
 
     def _save_settings(self, settings: SuperResolutionSettings) -> None:
@@ -220,6 +221,7 @@ class SuperResolutionFeature(ToolFeature):
         self.config.set("low_memory_mode", settings.low_memory_mode)
         self.config.set("conflict_strategy", settings.conflict_strategy)
         self.config.set("noise_level", settings.noise_level)
+        self.config.set("syncgap_mode", settings.syncgap_mode)
 
     def update_file_context(self, files: list[Path], selected_file: Path | None, logger: Callable[[str], None] | None = None) -> None:
         self._files = files
@@ -277,9 +279,25 @@ class SuperResolutionFeature(ToolFeature):
         if self.low_memory_checkbox:
             self.low_memory_checkbox.setEnabled(engine.supports_tile)
         if self.noise_combo:
+            self.noise_combo.blockSignals(True)
+            self.noise_combo.clear()
+            noise_options = engine.get_noise_options()
+            for option in noise_options:
+                self.noise_combo.addItem(option.label, option.value)
             saved_noise = self.config.get("noise_level", 0, int)
             self.noise_combo.setCurrentIndex(max(0, self.noise_combo.findData(saved_noise)))
-            self.noise_combo.setEnabled(getattr(engine, "supports_noise", False))
+            self.noise_combo.setEnabled(bool(noise_options) and getattr(engine, "supports_noise", False))
+            self.noise_combo.blockSignals(False)
+        if self.syncgap_combo:
+            self.syncgap_combo.blockSignals(True)
+            self.syncgap_combo.clear()
+            syncgap_options = engine.get_syncgap_options()
+            for option in syncgap_options:
+                self.syncgap_combo.addItem(option.label, option.value)
+            saved_syncgap = self.config.get("syncgap_mode", 2, int)
+            self.syncgap_combo.setCurrentIndex(max(0, self.syncgap_combo.findData(saved_syncgap)))
+            self.syncgap_combo.setEnabled(bool(syncgap_options) and getattr(engine, "supports_syncgap", False))
+            self.syncgap_combo.blockSignals(False)
         status = "√ 可用" if info.available else f"× 不可用：{info.unavailable_reason}"
         if self.engine_info_label:
             self.engine_info_label.setText(f"{status}：{info.display_name}\n{info.description}")
@@ -306,6 +324,8 @@ class SuperResolutionFeature(ToolFeature):
             self.tile_spin.setValue(preset.tile_size if preset.tile_mode == "manual" else 0)
         if self.noise_combo:
             self.noise_combo.setCurrentIndex(max(0, self.noise_combo.findData(preset.noise_level)))
+        if self.syncgap_combo:
+            self.syncgap_combo.setCurrentIndex(max(0, self.syncgap_combo.findData(preset.syncgap_mode)))
         self._update_preview()
 
     def _on_format_changed(self, *_args: object) -> None:

@@ -25,6 +25,13 @@ class UpscaleModel:
 
 
 @dataclass(frozen=True)
+class EngineOption:
+    label: str
+    value: int
+    description: str = ""
+
+
+@dataclass(frozen=True)
 class UpscaleConfig:
     engine_id: str
     model_name: str
@@ -41,6 +48,7 @@ class UpscaleConfig:
     threads: str = "1:2:2"
     use_tta: bool = False
     noise_level: int = 0
+    syncgap_mode: int = 2
 
 
 @dataclass
@@ -90,6 +98,7 @@ class UpscalePreset:
     tile_mode: str = "auto"
     tile_size: int = 0
     noise_level: int = 0
+    syncgap_mode: int = 2
 
 
 @dataclass(frozen=True)

@@ -64,6 +64,7 @@ class SuperResolutionSettings:
     low_memory_mode: bool
     conflict_strategy: str
     noise_level: int = 0
+    syncgap_mode: int = 2
 
     @property
     def effective_tile_size(self) -> int:
@@ -89,6 +90,7 @@ class SuperResolutionSettings:
             threads=self.threads,
             use_tta=self.use_tta,
             noise_level=self.noise_level,
+            syncgap_mode=self.syncgap_mode,
         )
 
 
@@ -225,6 +227,8 @@ def validate_super_resolution_inputs(files: list[Path], settings: SuperResolutio
         raise ValueError("JPG/WEBP 质量必须在 1 到 100 之间。")
     if settings.noise_level not in {-1, 0, 1, 2, 3}:
         raise ValueError("降噪等级只能选择关闭、弱、中、强、极强。")
+    if settings.syncgap_mode not in {0, 1, 2, 3}:
+        raise ValueError("SyncGap 只能选择关闭、质量优先、平衡、速度优先。")
     if settings.conflict_strategy not in {"rename", "skip", "overwrite"}:
         raise ValueError("输出文件冲突策略无效。")
 
@@ -246,6 +250,7 @@ def ensure_realesrgan_available(model_name: str | None = None) -> None:
         low_memory_mode=False,
         conflict_strategy="rename",
         noise_level=0,
+        syncgap_mode=2,
     )
     DEFAULT_ENGINE_MANAGER.get_engine("realesrgan").validate_config(settings.to_upscale_config())
 
@@ -309,6 +314,8 @@ class UpscaleProcessRunner:
         log(f"输出倍率：{settings.scale}x")
         if getattr(engine, "supports_noise", False):
             log(f"降噪等级：{settings.noise_level}")
+        if getattr(engine, "supports_syncgap", False):
+            log(f"SyncGap：{settings.syncgap_mode}")
         log(f"输出格式：{output_format.upper()}，Tile：{settings.effective_tile_size}")
         debug(f"工作目录：{command_info.cwd}")
         debug(f"完整命令：{' '.join(command_info.command)}")
