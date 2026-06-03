@@ -16,6 +16,7 @@ class BaseUpscaleEngine(ABC):
     supports_tile: bool = True
     supports_gpu_info: bool = True
     supports_progress_parse: bool = True
+    supports_noise: bool = False
 
     @abstractmethod
     def validate_config(self, config: UpscaleConfig) -> None:
@@ -44,3 +45,7 @@ class BaseUpscaleEngine(ABC):
     @abstractmethod
     def get_info(self) -> EngineInfo:
         raise NotImplementedError
+
+    def health_check(self) -> tuple[bool, str]:
+        info = self.get_info()
+        return info.available, info.unavailable_reason

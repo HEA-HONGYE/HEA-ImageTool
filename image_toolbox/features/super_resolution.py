@@ -43,6 +43,7 @@ class SuperResolutionFeature(ToolFeature):
         self.model_combo: QComboBox | None = None
         self.scale_combo: QComboBox | None = None
         self.format_combo: QComboBox | None = None
+        self.noise_combo: QComboBox | None = None
         self.quality_spin: QSpinBox | None = None
         self.tile_spin: QSpinBox | None = None
         self.gpu_edit: QLineEdit | None = None
@@ -105,6 +106,15 @@ class SuperResolutionFeature(ToolFeature):
         self.format_combo = QComboBox()
         self.format_combo.currentIndexChanged.connect(self._on_format_changed)
         form.addRow("输出格式", self.format_combo)
+
+        self.noise_combo = QComboBox()
+        self.noise_combo.addItem("关闭", -1)
+        self.noise_combo.addItem("弱", 0)
+        self.noise_combo.addItem("中", 1)
+        self.noise_combo.addItem("强", 2)
+        self.noise_combo.addItem("极强", 3)
+        self.noise_combo.setCurrentIndex(max(0, self.noise_combo.findData(self.config.get("noise_level", 0, int))))
+        form.addRow("降噪等级", self.noise_combo)
 
         self.quality_spin = QSpinBox()
         self.quality_spin.setRange(1, 100)
@@ -193,6 +203,7 @@ class SuperResolutionFeature(ToolFeature):
             use_tta=self.tta_checkbox.isChecked() if self.tta_checkbox else False,
             low_memory_mode=self.low_memory_checkbox.isChecked() if self.low_memory_checkbox else False,
             conflict_strategy=self.conflict_combo.currentData() if self.conflict_combo else "rename",
+            noise_level=self.noise_combo.currentData() if self.noise_combo else 0,
         )
 
     def _save_settings(self, settings: SuperResolutionSettings) -> None:
@@ -208,6 +219,7 @@ class SuperResolutionFeature(ToolFeature):
         self.config.set("use_tta", settings.use_tta)
         self.config.set("low_memory_mode", settings.low_memory_mode)
         self.config.set("conflict_strategy", settings.conflict_strategy)
+        self.config.set("noise_level", settings.noise_level)
 
     def update_file_context(self, files: list[Path], selected_file: Path | None, logger: Callable[[str], None] | None = None) -> None:
         self._files = files
@@ -264,9 +276,13 @@ class SuperResolutionFeature(ToolFeature):
             self.tile_spin.setEnabled(engine.supports_tile)
         if self.low_memory_checkbox:
             self.low_memory_checkbox.setEnabled(engine.supports_tile)
-        status = "可用" if info.available else f"不可用：{info.unavailable_reason}"
+        if self.noise_combo:
+            saved_noise = self.config.get("noise_level", 0, int)
+            self.noise_combo.setCurrentIndex(max(0, self.noise_combo.findData(saved_noise)))
+            self.noise_combo.setEnabled(getattr(engine, "supports_noise", False))
+        status = "√ 可用" if info.available else f"× 不可用：{info.unavailable_reason}"
         if self.engine_info_label:
-            self.engine_info_label.setText(f"{info.display_name}：{status}\n{info.description}")
+            self.engine_info_label.setText(f"{status}：{info.display_name}\n{info.description}")
         self._on_format_changed()
 
     def _apply_selected_preset(self, *_args: object) -> None:
@@ -288,6 +304,8 @@ class SuperResolutionFeature(ToolFeature):
             self.low_memory_checkbox.setChecked(preset.low_memory_mode)
         if self.tile_spin:
             self.tile_spin.setValue(preset.tile_size if preset.tile_mode == "manual" else 0)
+        if self.noise_combo:
+            self.noise_combo.setCurrentIndex(max(0, self.noise_combo.findData(preset.noise_level)))
         self._update_preview()
 
     def _on_format_changed(self, *_args: object) -> None:

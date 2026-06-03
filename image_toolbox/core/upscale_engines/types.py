@@ -11,6 +11,8 @@ INPUT_NOT_FOUND = "INPUT_NOT_FOUND"
 OUTPUT_ERROR = "OUTPUT_ERROR"
 PROCESS_FAILED = "PROCESS_FAILED"
 GPU_MEMORY_ERROR = "GPU_MEMORY_ERROR"
+VULKAN_ERROR = "VULKAN_ERROR"
+GPU_UNSUPPORTED = "GPU_UNSUPPORTED"
 CANCELLED = "CANCELLED"
 UNKNOWN_ERROR = "UNKNOWN_ERROR"
 
@@ -38,6 +40,7 @@ class UpscaleConfig:
     gpu_id: str = "auto"
     threads: str = "1:2:2"
     use_tta: bool = False
+    noise_level: int = 0
 
 
 @dataclass
@@ -86,6 +89,7 @@ class UpscalePreset:
     output_format: str = "original"
     tile_mode: str = "auto"
     tile_size: int = 0
+    noise_level: int = 0
 
 
 @dataclass(frozen=True)

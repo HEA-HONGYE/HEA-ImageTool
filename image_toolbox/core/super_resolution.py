@@ -16,12 +16,14 @@ from image_toolbox.core.upscale_engines.types import (
     CANCELLED,
     ENGINE_NOT_FOUND,
     GPU_MEMORY_ERROR,
+    GPU_UNSUPPORTED,
     INPUT_NOT_FOUND,
     INVALID_CONFIG,
     MODEL_NOT_FOUND,
     OUTPUT_ERROR,
     PROCESS_FAILED,
     UNKNOWN_ERROR,
+    VULKAN_ERROR,
     UpscaleConfig,
 )
 
@@ -61,6 +63,7 @@ class SuperResolutionSettings:
     use_tta: bool
     low_memory_mode: bool
     conflict_strategy: str
+    noise_level: int = 0
 
     @property
     def effective_tile_size(self) -> int:
@@ -85,6 +88,7 @@ class SuperResolutionSettings:
             gpu_id=self.gpu_id,
             threads=self.threads,
             use_tta=self.use_tta,
+            noise_level=self.noise_level,
         )
 
 
@@ -172,6 +176,8 @@ def _map_error_type(error_type: str) -> FailureReason:
         return "输出目录无权限"
     if error_type == GPU_MEMORY_ERROR:
         return "显存不足或疑似显存不足"
+    if error_type in {VULKAN_ERROR, GPU_UNSUPPORTED}:
+        return "引擎执行失败"
     if error_type == CANCELLED:
         return "用户取消"
     if error_type in {PROCESS_FAILED, INVALID_CONFIG}:
@@ -217,6 +223,8 @@ def validate_super_resolution_inputs(files: list[Path], settings: SuperResolutio
         raise ValueError("Tile 模式无效。")
     if not 1 <= settings.quality <= 100:
         raise ValueError("JPG/WEBP 质量必须在 1 到 100 之间。")
+    if settings.noise_level not in {-1, 0, 1, 2, 3}:
+        raise ValueError("降噪等级只能选择关闭、弱、中、强、极强。")
     if settings.conflict_strategy not in {"rename", "skip", "overwrite"}:
         raise ValueError("输出文件冲突策略无效。")
 
@@ -237,6 +245,7 @@ def ensure_realesrgan_available(model_name: str | None = None) -> None:
         use_tta=False,
         low_memory_mode=False,
         conflict_strategy="rename",
+        noise_level=0,
     )
     DEFAULT_ENGINE_MANAGER.get_engine("realesrgan").validate_config(settings.to_upscale_config())
 
@@ -298,6 +307,8 @@ class UpscaleProcessRunner:
         log(f"使用引擎：{engine.display_name}")
         log(f"使用模型：{settings.model_name}")
         log(f"输出倍率：{settings.scale}x")
+        if getattr(engine, "supports_noise", False):
+            log(f"降噪等级：{settings.noise_level}")
         log(f"输出格式：{output_format.upper()}，Tile：{settings.effective_tile_size}")
         debug(f"工作目录：{command_info.cwd}")
         debug(f"完整命令：{' '.join(command_info.command)}")
