@@ -8,6 +8,7 @@ from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton, QStackedWidget, QTextEdit, QVBoxLayout, QWidget
 
 from image_toolbox import APP_NAME, APP_VERSION
+from image_toolbox.core.super_resolution import SuperResolutionSummary
 from image_toolbox.core.tasks import ImageBatchTask
 from image_toolbox.features.compression import CompressionFeature
 from image_toolbox.features.conversion import ConversionFeature
@@ -39,7 +40,11 @@ class MainWindow(QMainWindow):
         self.run_button: QPushButton | None = None
         self.pause_button: QPushButton | None = None
         self.cancel_button: QPushButton | None = None
+        self.retry_failed_button: QPushButton | None = None
+        self.current_progress_label: QLabel | None = None
         self.current_task: ImageBatchTask | None = None
+        self.last_failed_files: list[Path] = []
+        self.last_failed_feature_key: str | None = None
 
         root = QWidget()
         root_layout = QVBoxLayout(root)
@@ -63,6 +68,8 @@ class MainWindow(QMainWindow):
 
         self.file_panel = FilePanel()
         self.file_panel.setFixedWidth(350)
+        self.file_panel.files_changed.connect(self._notify_file_context_changed)
+        self.file_panel.selection_changed.connect(self._notify_file_context_changed)
         content.addWidget(self.file_panel)
 
         root_layout.addWidget(self._build_bottom_panel())
@@ -99,7 +106,7 @@ class MainWindow(QMainWindow):
         self.pause_button = QPushButton("暂停")
         self.pause_button.setObjectName("GhostButton")
         self.pause_button.clicked.connect(self.toggle_pause)
-        self.cancel_button = QPushButton("取消")
+        self.cancel_button = QPushButton("停止")
         self.cancel_button.setObjectName("GhostButton")
         self.cancel_button.clicked.connect(self.cancel_task)
         layout.addWidget(self.run_button)
@@ -134,12 +141,16 @@ class MainWindow(QMainWindow):
         open_output_button = QPushButton("打开输出目录")
         open_output_button.setObjectName("GhostButton")
         open_output_button.clicked.connect(self.open_output_dir)
+        self.retry_failed_button = QPushButton("重试失败项")
+        self.retry_failed_button.setObjectName("GhostButton")
+        self.retry_failed_button.clicked.connect(self.retry_failed_items)
         clear_button = QPushButton("清空日志")
         clear_button.setObjectName("GhostButton")
         clear_button.clicked.connect(lambda: self.log_box.clear())
         header.addWidget(title)
         header.addStretch()
         header.addWidget(open_output_button)
+        header.addWidget(self.retry_failed_button)
         header.addWidget(clear_button)
         layout.addLayout(header)
 
@@ -151,6 +162,9 @@ class MainWindow(QMainWindow):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         layout.addWidget(self.progress_bar)
+        self.current_progress_label = QLabel("当前：未开始")
+        self.current_progress_label.setObjectName("MutedText")
+        layout.addWidget(self.current_progress_label)
         return panel
 
     def _add_page(self, key: str, widget: QWidget) -> None:
@@ -163,6 +177,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(self.page_keys.index(key))
         for button_key, button in self.nav_buttons.items():
             button.setChecked(button_key == key)
+        self._notify_file_context_changed()
 
     def run_current_feature(self) -> None:
         if self.is_running:
@@ -183,20 +198,34 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.file_panel.reset_statuses()
         try:
-            processor = feature.create_processor(files)
+            task = feature.create_task(files)
+            if task is None:
+                processor = feature.create_processor(files)
+                task = ImageBatchTask(files, processor)
         except Exception as exc:
             self._log(f"参数错误：{exc}")
             return
 
-        task = ImageBatchTask(files, processor)
+        self._start_task(key, feature.title, files, task)
+
+    def _start_task(self, key: str, title: str, files: list[Path], task) -> None:
         task.signals.log.connect(self._log)
+        if hasattr(task.signals, "debug"):
+            task.signals.debug.connect(self._log_debug)
         task.signals.progress.connect(self.progress_bar.setValue)
+        if hasattr(task.signals, "current_progress"):
+            task.signals.current_progress.connect(self._set_current_progress)
         task.signals.file_status.connect(self.file_panel.set_file_status)
         task.signals.failed.connect(self._task_failed)
-        task.signals.finished.connect(self._task_finished)
+        if key == "super_resolution":
+            task.signals.finished.connect(self._super_resolution_finished)
+        else:
+            task.signals.finished.connect(self._task_finished)
         self.current_task = task
         self._set_running(True)
-        self._log(f"开始：{feature.title}，共 {len(files)} 个文件。")
+        if self.current_progress_label:
+            self.current_progress_label.setText("当前：准备开始")
+        self._log(f"开始：{title}，共 {len(files)} 个文件。")
         self.thread_pool.start(task)
 
     def toggle_pause(self) -> None:
@@ -217,7 +246,25 @@ class MainWindow(QMainWindow):
         if not self.current_task:
             return
         self.current_task.cancel()
-        self._log("正在取消任务...")
+        self._log("正在停止任务...")
+
+    def retry_failed_items(self) -> None:
+        if self.is_running:
+            self._log("已有任务正在处理，请等待完成。")
+            return
+        if not self.last_failed_files or not self.last_failed_feature_key:
+            self._log("当前没有可重试的失败项。")
+            return
+        feature = self.features[self.last_failed_feature_key]
+        try:
+            task = feature.create_task(self.last_failed_files)
+        except Exception as exc:
+            self._log(f"参数错误：{exc}")
+            return
+        self.file_panel.clear_files()
+        self.file_panel.add_files(self.last_failed_files)
+        self.progress_bar.setValue(0)
+        self._start_task(self.last_failed_feature_key, f"{feature.title}（重试失败项）", self.last_failed_files, task)
 
     def open_output_dir(self) -> None:
         key = self.page_keys[self.stack.currentIndex()]
@@ -239,6 +286,23 @@ class MainWindow(QMainWindow):
         self.current_task = None
         self._set_running(False)
 
+    def _super_resolution_finished(self, summary: SuperResolutionSummary) -> None:
+        elapsed = self._format_elapsed(summary.elapsed_seconds)
+        self.last_failed_files = [item.source for item in summary.failed_items]
+        self.last_failed_feature_key = "super_resolution" if self.last_failed_files else None
+        self._log(
+            f"AI 超分完成。总数量 {summary.total}，成功 {summary.success_count}，失败 {summary.failed_count}，跳过 {summary.skipped_count}，耗时 {elapsed}。"
+        )
+        self._log(f"输出目录：{summary.output_dir}")
+        if summary.failed_items:
+            self._log("失败项/失败日志：")
+            for item in summary.failed_items:
+                self._log(f"- {item.source.name}：{item.reason}")
+        if self.current_progress_label:
+            self.current_progress_label.setText("当前：已完成")
+        self.current_task = None
+        self._set_running(False)
+
     def _set_running(self, is_running: bool) -> None:
         self.is_running = is_running
         if not is_running:
@@ -251,10 +315,32 @@ class MainWindow(QMainWindow):
             self.pause_button.setText("暂停")
         if self.cancel_button:
             self.cancel_button.setEnabled(is_running)
+            self.cancel_button.setText("停止")
+        if self.retry_failed_button:
+            self.retry_failed_button.setEnabled((not is_running) and bool(self.last_failed_files))
 
     def _log(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_box.append(f"[{timestamp}] {message}")
+
+    def _log_debug(self, message: str) -> None:
+        self._log(message)
+
+    def _set_current_progress(self, message: str) -> None:
+        if self.current_progress_label:
+            self.current_progress_label.setText(message)
+
+    def _notify_file_context_changed(self) -> None:
+        key = self.page_keys[self.stack.currentIndex()] if hasattr(self, "stack") and self.page_keys else ""
+        if key in self.features:
+            selected_file = self.file_panel.selected_file() if hasattr(self, "file_panel") else None
+            self.features[key].update_file_context(list(self.file_panel.files), selected_file, self._log)
+
+    def _format_elapsed(self, seconds: float) -> str:
+        minutes, sec = divmod(int(seconds), 60)
+        if minutes:
+            return f"{minutes} 分 {sec} 秒"
+        return f"{sec} 秒"
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         if self.is_running and self.current_task:

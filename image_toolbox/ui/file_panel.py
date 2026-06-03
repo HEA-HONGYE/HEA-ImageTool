@@ -3,13 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from PIL import Image
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout
 
 from image_toolbox.core.image_ops import is_supported_image
 
 
 class FilePanel(QFrame):
+    files_changed = Signal()
+    selection_changed = Signal()
+
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("RightPanel")
@@ -36,7 +39,7 @@ class FilePanel(QFrame):
         layout.addLayout(buttons)
 
         self.list_widget = QListWidget()
-        self.list_widget.currentRowChanged.connect(self._update_info)
+        self.list_widget.currentRowChanged.connect(self._on_current_row_changed)
         layout.addWidget(self.list_widget, 1)
 
         self.info_label = QLabel("拖入图片或点击添加。")
@@ -65,12 +68,14 @@ class FilePanel(QFrame):
         if self.files and self.list_widget.currentRow() < 0:
             self.list_widget.setCurrentRow(0)
         self._update_info(self.list_widget.currentRow())
+        self.files_changed.emit()
 
     def clear_files(self) -> None:
         self.files.clear()
         self.statuses.clear()
         self.list_widget.clear()
         self.info_label.setText("拖入图片或点击添加。")
+        self.files_changed.emit()
 
     def reset_statuses(self) -> None:
         for index in range(len(self.statuses)):
@@ -98,6 +103,16 @@ class FilePanel(QFrame):
 
     def _item_text(self, name: str, status: str) -> str:
         return f"[{status}] {name}"
+
+    def selected_file(self) -> Path | None:
+        row = self.list_widget.currentRow()
+        if row < 0 or row >= len(self.files):
+            return self.files[0] if self.files else None
+        return self.files[row]
+
+    def _on_current_row_changed(self, row: int) -> None:
+        self._update_info(row)
+        self.selection_changed.emit()
 
     def _update_info(self, row: int) -> None:
         if row < 0 or row >= len(self.files):

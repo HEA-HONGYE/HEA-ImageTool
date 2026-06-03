@@ -5,3 +5,12 @@ output/
 .pytest_cache/
 .mypy_cache/
 ai超分参考文件/
+build/
+dist/
+*.exe
+*.dll
+*.onnx
+*.pth
+*.bin
+*.param
+*.tmp

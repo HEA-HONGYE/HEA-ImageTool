@@ -49,6 +49,7 @@ QPushButton {
     border: 0;
     border-radius: 6px;
     padding: 8px 12px;
+    min-height: 24px;
     color: white;
     font-weight: 600;
 }
@@ -105,12 +106,33 @@ QGroupBox::title {
     padding: 0 5px;
 }
 
-QLineEdit, QComboBox, QTextEdit, QListWidget {
+QLineEdit, QComboBox, QSpinBox, QTextEdit, QListWidget {
     background: #11151b;
     border: 1px solid #303946;
     border-radius: 6px;
-    padding: 7px 9px;
+    padding: 6px 9px;
     color: #eef2f7;
+}
+
+QLineEdit, QComboBox, QSpinBox {
+    min-height: 24px;
+}
+
+QComboBox QAbstractItemView {
+    background: #11151b;
+    border: 1px solid #303946;
+    selection-background-color: #26384f;
+    outline: 0;
+}
+
+QComboBox QAbstractItemView::item {
+    min-height: 24px;
+    padding: 5px 8px;
+}
+
+QCheckBox {
+    min-height: 24px;
+    spacing: 8px;
 }
 
 QListWidget::item {
