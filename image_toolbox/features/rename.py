@@ -3,11 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtWidgets import QCheckBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
 from image_toolbox.core.config import AppConfig
 from image_toolbox.core.image_ops import rename_image
 from image_toolbox.features.base import ToolFeature
+from image_toolbox.ui.widgets import NoWheelSpinBox as QSpinBox
 
 
 class RenameFeature(ToolFeature):

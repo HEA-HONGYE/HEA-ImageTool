@@ -5,7 +5,6 @@ from typing import Callable
 
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -13,7 +12,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -30,6 +28,8 @@ from image_toolbox.core.super_resolution import (
 from image_toolbox.core.upscale_engines import DEFAULT_ENGINE_MANAGER
 from image_toolbox.core.upscale_engines.presets import UPSCALE_PRESETS
 from image_toolbox.features.base import ToolFeature
+from image_toolbox.ui.widgets import NoWheelComboBox as QComboBox
+from image_toolbox.ui.widgets import NoWheelSpinBox as QSpinBox
 
 
 class SuperResolutionFeature(ToolFeature):

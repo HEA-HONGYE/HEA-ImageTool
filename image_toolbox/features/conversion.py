@@ -4,11 +4,12 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QVBoxLayout, QWidget
 
 from image_toolbox.core.config import AppConfig
 from image_toolbox.core.image_ops import convert_image
 from image_toolbox.features.base import ToolFeature
+from image_toolbox.ui.widgets import NoWheelComboBox as QComboBox
 
 
 class ConversionFeature(ToolFeature):

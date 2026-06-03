@@ -6,7 +6,6 @@ from typing import Any
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -15,7 +14,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
-    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -25,6 +23,8 @@ from PySide6.QtWidgets import (
 
 from image_toolbox.core.engine_settings import EngineSettings, ModelSettings, get_engine_settings_store
 from image_toolbox.core.upscale_engines import DEFAULT_ENGINE_MANAGER
+from image_toolbox.ui.widgets import NoWheelComboBox as QComboBox
+from image_toolbox.ui.widgets import NoWheelSpinBox as QSpinBox
 
 
 ENGINE_TAB_ORDER = ["waifu2x", "anime4k", "realesrgan", "realcugan", "srmd", "realsr"]
