@@ -54,7 +54,15 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
         False,
         ("-h",),
     ),
-    "dain": ToolDefinition("dain", "DAIN", ("dain-ncnn-vulkan.exe",), "dain_path", "dain", False, ("-h",)),
+    "dain": ToolDefinition(
+        "dain",
+        "DAIN",
+        ("dain-ncnn-vulkan.exe", "dain-ncnn-vulkan_waifu2xEX.exe", "dain-ncnn-vulkan"),
+        "dain_path",
+        "dain",
+        False,
+        ("-h",),
+    ),
     "cain": ToolDefinition(
         "cain",
         "CAIN",
@@ -197,7 +205,7 @@ def reload_tool_manager() -> ToolManager:
 
 
 def find_tools_in_source(source_root: Path) -> dict[str, list[Path]]:
-    results: dict[str, list[Path]] = {tool_id: [] for tool_id in ["ffmpeg", "ffprobe", "rife", "ifrnet", "cain"]}
+    results: dict[str, list[Path]] = {tool_id: [] for tool_id in ["ffmpeg", "ffprobe", "rife", "ifrnet", "cain", "dain"]}
     if not source_root.exists():
         return results
     for file_path in source_root.rglob("*.exe"):
@@ -212,6 +220,8 @@ def find_tools_in_source(source_root: Path) -> dict[str, list[Path]]:
             results["ifrnet"].append(file_path)
         elif lower_name in {"cain-ncnn-vulkan.exe", "cain-ncnn-vulkan_waifu2xex.exe"}:
             results["cain"].append(file_path)
+        elif lower_name in {"dain-ncnn-vulkan.exe", "dain-ncnn-vulkan_waifu2xex.exe"}:
+            results["dain"].append(file_path)
     return {tool_id: sorted(paths) for tool_id, paths in results.items()}
 
 
@@ -233,7 +243,7 @@ def import_tools_from_source(source_root: Path, strategy: str = "skip") -> list[
         else:
             shutil.copy2(source, target)
             logs.append(f"复制：{source} -> {target}")
-            if tool_id in {"rife", "ifrnet", "cain"}:
+            if tool_id in {"rife", "ifrnet", "cain", "dain"}:
                 for dll_path in sorted(source.parent.glob("*.dll")):
                     dll_target = target_dir / dll_path.name
                     if dll_target.exists() and strategy == "skip":

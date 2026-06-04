@@ -328,6 +328,7 @@ class SuperResolutionFeature(ToolFeature):
         self.interpolation_engine_combo.addItem("RIFE", "rife")
         self.interpolation_engine_combo.addItem("IFRNet", "ifrnet")
         self.interpolation_engine_combo.addItem("CAIN", "cain")
+        self.interpolation_engine_combo.addItem("DAIN", "dain")
         self.interpolation_engine_combo.setCurrentIndex(max(0, self.interpolation_engine_combo.findData(self.config.get("interpolation_engine", "rife", str))))
         self.interpolation_engine_combo.currentIndexChanged.connect(self._on_interpolation_engine_changed)
         form.addRow("插帧引擎", self.interpolation_engine_combo)
@@ -370,19 +371,24 @@ class SuperResolutionFeature(ToolFeature):
 
     def _on_interpolation_engine_changed(self, *_args: object) -> None:
         self._refresh_interpolation_models()
-        self._refresh_preview()
+        self._on_interpolation_changed()
 
     def _on_interpolation_changed(self, *_args: object) -> None:
         enabled = self.interpolation_enabled_checkbox.isChecked() if self.interpolation_enabled_checkbox else False
+        engine_id = self.interpolation_engine_combo.currentData() if self.interpolation_engine_combo else "rife"
         for widget in [
             self.interpolation_engine_combo,
             self.interpolation_scale_combo,
             self.interpolation_model_combo,
             self.interpolation_gpu_edit,
-            self.interpolation_tta_checkbox,
         ]:
             if widget:
                 widget.setEnabled(enabled)
+        if self.interpolation_tta_checkbox:
+            supports_tta = engine_id not in {"cain", "dain"}
+            self.interpolation_tta_checkbox.setEnabled(enabled and supports_tta)
+            if not supports_tta:
+                self.interpolation_tta_checkbox.setChecked(False)
         self._refresh_preview()
 
     def _build_preview_group(self) -> QWidget:

@@ -12,7 +12,7 @@ from threading import Event
 from PySide6.QtCore import QRunnable, Slot
 
 from image_toolbox.core.ffmpeg_tools import has_audio_stream, media_fps, probe_media, require_ffmpeg_tools
-from image_toolbox.core.model_library import build_cain_command, build_ifrnet_command, build_rife_command, list_interpolation_models
+from image_toolbox.core.model_library import build_cain_command, build_dain_command, build_ifrnet_command, build_rife_command, list_interpolation_models
 from image_toolbox.core.media_task_utils import (
     MediaTaskRecord,
     TaskLogWriter,
@@ -84,6 +84,10 @@ def resolve_ifrnet_executable() -> Path:
 
 def resolve_cain_executable() -> Path:
     return get_tool_manager().require_tool("cain")
+
+
+def resolve_dain_executable() -> Path:
+    return get_tool_manager().require_tool("dain")
 
 
 def _resolve_video_output_path(source: Path, settings: VideoProcessSettings) -> Path | None:
@@ -373,6 +377,21 @@ class VideoMediaTask(QRunnable):
                 FRAME_PATTERN,
             )
             display_name = "IFRNet"
+        elif self.settings.interpolation_engine == "dain":
+            executable = resolve_dain_executable()
+            command = build_dain_command(
+                executable,
+                frames_in,
+                frames_out,
+                self.settings.interpolation_scale,
+                self.settings.interpolation_model or "best",
+                self.settings.interpolation_gpu_id,
+                len(input_frames) * self.settings.interpolation_scale,
+                FRAME_PATTERN,
+            )
+            if self.settings.interpolation_tta:
+                self._log("DAIN 当前命令行不支持 TTA 参数，已忽略 TTA。")
+            display_name = "DAIN"
         else:
             raise RuntimeError(f"当前版本不支持插帧引擎：{self.settings.interpolation_engine}")
         self._set_state("interpolating", "interpolating")

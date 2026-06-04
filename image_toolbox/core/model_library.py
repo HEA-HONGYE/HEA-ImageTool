@@ -353,6 +353,38 @@ def build_cain_command(
     return command
 
 
+def build_dain_command(
+    executable_path: Path,
+    input_frames: Path,
+    output_frames: Path,
+    scale: int = 2,
+    model_name: str = "best",
+    gpu_id: str = "auto",
+    target_frame_count: int | None = None,
+    output_pattern: str = "%06d.png",
+) -> list[str]:
+    if scale not in {2, 4}:
+        raise ValueError(f"DAIN 仅支持 2x / 4x，当前：{scale}x")
+    model_root = resolve_interpolation_model_dir("dain", model_name)
+    target_count = target_frame_count or scale
+    command = [
+        str(executable_path),
+        "-i",
+        str(input_frames.resolve()),
+        "-o",
+        str(output_frames.resolve()),
+        "-m",
+        str(model_root.resolve()),
+        "-n",
+        str(target_count),
+        "-f",
+        output_pattern,
+    ]
+    if gpu_id and gpu_id != "auto":
+        command.extend(["-g", gpu_id])
+    return command
+
+
 def import_custom_model(engine_id: str, source: Path, model_name: str | None = None, strategy: str = "rename") -> tuple[str, CopyStats]:
     ensure_project_model_dirs()
     clean_name = model_name or source.stem if source.is_file() else source.name
