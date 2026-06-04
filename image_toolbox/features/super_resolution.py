@@ -518,6 +518,9 @@ class SuperResolutionFeature(ToolFeature):
             interpolation_gpu_id=self.interpolation_gpu_edit.text() if self.interpolation_gpu_edit else "auto",
             interpolation_tta=self.interpolation_tta_checkbox.isChecked() if self.interpolation_tta_checkbox else False,
             output_fps=self.video_fps_spin.value() if self.video_fps_spin else 0.0,
+            video_codec=self.config.get("video_codec", "libx264", str),
+            crf=self.config.get("video_crf", 18, int),
+            bitrate=self.config.get("video_bitrate", "", str),
             conflict_strategy=self.conflict_combo.currentData() if self.conflict_combo else "rename",
             upscale_settings=frame_upscale_settings,
         )

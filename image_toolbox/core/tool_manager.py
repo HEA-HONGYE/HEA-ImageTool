@@ -7,7 +7,7 @@ from enum import Enum
 from pathlib import Path
 
 from image_toolbox.core.config import AppConfig
-from image_toolbox.core.paths import get_project_root, looks_like_external_asset_path
+from image_toolbox.core.paths import get_project_root, is_inside_path, looks_like_external_asset_path
 
 
 class ToolHealthStatus(str, Enum):
@@ -92,13 +92,16 @@ class ToolManager:
     def project_tool_dir(self, tool_id: str) -> Path:
         return self.tools_root / TOOL_DEFINITIONS[tool_id].project_subdir
 
+    def _allowed_runtime_path(self, path: Path) -> bool:
+        if is_inside_path(path, self.tools_root):
+            return True
+        return not looks_like_external_asset_path(path)
+
     def resolve_tool_path(self, tool_id: str) -> Path | None:
         definition = TOOL_DEFINITIONS[tool_id]
         configured = self.configured_path(tool_id)
         if configured:
-            if looks_like_external_asset_path(configured):
-                return None
-            return configured
+            return configured if self._allowed_runtime_path(configured) else None
         project_dir = self.project_tool_dir(tool_id)
         for executable_name in definition.executable_names:
             candidate = project_dir / executable_name
@@ -124,7 +127,7 @@ class ToolManager:
         path = self.resolve_tool_path(tool_id)
         if path is None:
             return ToolHealth(tool_id, definition.display_name, ToolHealthStatus.MISSING, reason="未检测到工具")
-        if looks_like_external_asset_path(path):
+        if not self._allowed_runtime_path(path):
             return ToolHealth(tool_id, definition.display_name, ToolHealthStatus.INVALID, path=path, reason="工具路径指向素材库，不能作为运行路径")
         if not path.exists():
             return ToolHealth(tool_id, definition.display_name, ToolHealthStatus.MISSING, path=path, reason="文件不存在")
@@ -158,9 +161,7 @@ class ToolManager:
         return health.path
 
     def require_ffmpeg_pair(self) -> tuple[Path, Path]:
-        ffmpeg = self.require_tool("ffmpeg")
-        ffprobe = self.require_tool("ffprobe")
-        return ffmpeg, ffprobe
+        return self.require_tool("ffmpeg"), self.require_tool("ffprobe")
 
 
 _TOOL_MANAGER: ToolManager | None = None
@@ -199,13 +200,14 @@ def import_tools_from_source(source_root: Path, strategy: str = "skip") -> list[
     discovered = find_tools_in_source(source_root)
     logs: list[str] = []
     for tool_id, paths in discovered.items():
+        definition = TOOL_DEFINITIONS[tool_id]
         if not paths:
-            logs.append(f"未发现 {TOOL_DEFINITIONS[tool_id].display_name}")
+            logs.append(f"未发现 {definition.display_name}")
             continue
         source = paths[0]
         target_dir = manager.project_tool_dir(tool_id)
         target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / TOOL_DEFINITIONS[tool_id].executable_names[0]
+        target = target_dir / definition.executable_names[0]
         if target.exists() and strategy == "skip":
             logs.append(f"跳过已存在：{target}")
         else:

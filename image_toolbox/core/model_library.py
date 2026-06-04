@@ -236,8 +236,11 @@ def build_rife_command(
     model_name: str = "",
     gpu_id: str = "auto",
     use_tta: bool = False,
+    target_frame_count: int | None = None,
+    output_pattern: str = "%06d.png",
 ) -> list[str]:
     model_root = resolve_interpolation_model_dir("rife", model_name)
+    target_count = target_frame_count or scale
     command = [
         str(executable_path),
         "-i",
@@ -247,7 +250,9 @@ def build_rife_command(
         "-m",
         str(model_root.resolve()),
         "-n",
-        str(scale),
+        str(target_count),
+        "-f",
+        output_pattern,
     ]
     if gpu_id and gpu_id != "auto":
         command.extend(["-g", gpu_id])
