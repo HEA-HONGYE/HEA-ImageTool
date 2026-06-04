@@ -21,13 +21,14 @@ from image_toolbox.features.super_resolution import SuperResolutionFeature
 from image_toolbox.features.tool_settings import ToolSettingsPanel
 from image_toolbox.features.watermark import WatermarkFeature
 from image_toolbox.ui.file_panel import FilePanel
+from image_toolbox.ui.widgets import AppShell, GlassSidebar, GlassStatusBar
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} {APP_VERSION}")
-        self.resize(1240, 800)
+        self.resize(1360, 860)
         self.thread_pool = QThreadPool.globalInstance()
         self.features = {
             "compress": CompressionFeature(),
@@ -49,16 +50,14 @@ class MainWindow(QMainWindow):
         self.last_failed_files: list[Path] = []
         self.last_failed_feature_key: str | None = None
 
-        root = QWidget()
-        root_layout = QVBoxLayout(root)
-        root_layout.setContentsMargins(0, 0, 0, 0)
-        root_layout.setSpacing(0)
-        self.setCentralWidget(root)
+        self.shell = AppShell()
+        self.setCentralWidget(self.shell)
+        self._build_toolbar(self.shell.toolbar)
 
         content = QHBoxLayout()
         content.setContentsMargins(0, 0, 0, 0)
-        content.setSpacing(0)
-        root_layout.addLayout(content, 1)
+        content.setSpacing(16)
+        self.shell.workspace_layout.addLayout(content, 1)
 
         content.addWidget(self._build_sidebar())
 
@@ -77,18 +76,35 @@ class MainWindow(QMainWindow):
         self.file_panel.selection_changed.connect(self._notify_file_context_changed)
         content.addWidget(self.file_panel)
 
-        root_layout.addWidget(self._build_bottom_panel())
+        self.shell.body_layout.addWidget(self._build_bottom_panel())
         self.switch_page("home")
         self._set_running(False)
         self._log_tool_health()
 
+    def _build_toolbar(self, toolbar: QFrame) -> None:
+        layout = QHBoxLayout(toolbar)
+        layout.setContentsMargins(24, 14, 24, 14)
+        layout.setSpacing(16)
+
+        title_block = QVBoxLayout()
+        title_block.setSpacing(2)
+        title = QLabel(f"{APP_NAME} v{APP_VERSION}")
+        title.setObjectName("CardTitle")
+        subtitle = QLabel("High-quality Enhancement Assistant")
+        subtitle.setObjectName("MutedText")
+        title_block.addWidget(title)
+        title_block.addWidget(subtitle)
+        layout.addLayout(title_block, 1)
+
+        health = QLabel("Liquid Glass AppShell · Local batch workstation")
+        health.setObjectName("MutedText")
+        layout.addWidget(health)
+
     def _build_sidebar(self) -> QWidget:
-        sidebar = QFrame()
-        sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(220)
+        sidebar = GlassSidebar()
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(16, 18, 16, 18)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
         brand = QLabel(APP_NAME)
         brand.setObjectName("CardTitle")
@@ -98,15 +114,15 @@ class MainWindow(QMainWindow):
         layout.addWidget(version)
         layout.addSpacing(14)
 
-        self._add_nav_button(layout, "home", "首页")
-        self._add_nav_button(layout, "compress", "图片压缩")
-        self._add_nav_button(layout, "convert", "格式转换")
-        self._add_nav_button(layout, "resize", "批量改尺寸")
-        self._add_nav_button(layout, "super_resolution", "智能媒体增强")
-        self._add_nav_button(layout, "watermark", "批量加水印")
-        self._add_nav_button(layout, "rename", "批量重命名")
-        self._add_nav_button(layout, "engine_settings", "引擎设置")
-        self._add_nav_button(layout, "tool_settings", "工具管理")
+        self._add_nav_button(layout, "home", "⌂  首页")
+        self._add_nav_button(layout, "compress", "◱  图片压缩")
+        self._add_nav_button(layout, "convert", "⇄  格式转换")
+        self._add_nav_button(layout, "resize", "⌗  批量改尺寸")
+        self._add_nav_button(layout, "super_resolution", "✦  智能媒体增强")
+        self._add_nav_button(layout, "watermark", "◇  批量加水印")
+        self._add_nav_button(layout, "rename", "Aa  批量重命名")
+        self._add_nav_button(layout, "engine_settings", "⚙  引擎设置")
+        self._add_nav_button(layout, "tool_settings", "◌  工具管理")
         layout.addStretch()
 
         self.run_button = QPushButton("开始处理")
@@ -136,11 +152,9 @@ class MainWindow(QMainWindow):
         return home
 
     def _build_bottom_panel(self) -> QWidget:
-        panel = QFrame()
-        panel.setObjectName("BottomPanel")
-        panel.setFixedHeight(170)
+        panel = GlassStatusBar()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setContentsMargins(20, 14, 20, 14)
         layout.setSpacing(8)
 
         header = QHBoxLayout()

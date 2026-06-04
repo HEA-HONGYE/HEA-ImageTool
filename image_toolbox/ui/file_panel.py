@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from PIL import Image
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QProgressBar, QPushButton, QVBoxLayout, QWidget
 
 from image_toolbox.core.image_ops import is_supported_image
 
@@ -24,9 +24,23 @@ class FilePanel(QFrame):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
+        header = QHBoxLayout()
         title = QLabel("任务队列")
         title.setObjectName("CardTitle")
-        layout.addWidget(title)
+        self.count_label = QLabel("0 个任务")
+        self.count_label.setObjectName("MutedText")
+        header.addWidget(title)
+        header.addStretch()
+        header.addWidget(self.count_label)
+        layout.addLayout(header)
+
+        stats = QHBoxLayout()
+        stats.setSpacing(8)
+        self.running_label = self._build_stat_label("运行中 0")
+        self.waiting_label = self._build_stat_label("等待中 0")
+        stats.addWidget(self.running_label)
+        stats.addWidget(self.waiting_label)
+        layout.addLayout(stats)
 
         buttons = QHBoxLayout()
         add_button = QPushButton("添加图片")
@@ -39,6 +53,7 @@ class FilePanel(QFrame):
         layout.addLayout(buttons)
 
         self.list_widget = QListWidget()
+        self.list_widget.setObjectName("TaskQueueList")
         self.list_widget.currentRowChanged.connect(self._on_current_row_changed)
         layout.addWidget(self.list_widget, 1)
 
@@ -47,6 +62,12 @@ class FilePanel(QFrame):
         self.info_label.setWordWrap(True)
         self.info_label.setAlignment(Qt.AlignTop)
         layout.addWidget(self.info_label)
+
+    def _build_stat_label(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("QueueStatPill")
+        label.setAlignment(Qt.AlignCenter)
+        return label
 
     def choose_files(self) -> None:
         selected, _ = QFileDialog.getOpenFileNames(
@@ -64,10 +85,11 @@ class FilePanel(QFrame):
                 self.files.append(path)
                 self.statuses.append("待处理")
                 existing.add(path.resolve())
-                self.list_widget.addItem(self._item_text(path.name, "待处理"))
+                self._append_task_item(path, "待处理")
         if self.files and self.list_widget.currentRow() < 0:
             self.list_widget.setCurrentRow(0)
         self._update_info(self.list_widget.currentRow())
+        self._refresh_summary()
         self.files_changed.emit()
 
     def clear_files(self) -> None:
@@ -75,6 +97,7 @@ class FilePanel(QFrame):
         self.statuses.clear()
         self.list_widget.clear()
         self.info_label.setText("拖入图片或点击添加。")
+        self._refresh_summary()
         self.files_changed.emit()
 
     def reset_statuses(self) -> None:
@@ -89,9 +112,12 @@ class FilePanel(QFrame):
         if item is None:
             item = QListWidgetItem()
             self.list_widget.insertItem(index, item)
-        item.setText(self._item_text(self.files[index].name, status))
+        item.setText("")
+        item.setSizeHint(QSize(0, 68))
+        self.list_widget.setItemWidget(item, self._build_task_item_widget(self.files[index], status))
         if self.list_widget.currentRow() == index:
             self._update_info(index)
+        self._refresh_summary()
 
     def dragEnterEvent(self, event) -> None:  # noqa: N802
         if event.mimeData().hasUrls():
@@ -103,6 +129,61 @@ class FilePanel(QFrame):
 
     def _item_text(self, name: str, status: str) -> str:
         return f"[{status}] {name}"
+
+    def _append_task_item(self, path: Path, status: str) -> None:
+        item = QListWidgetItem()
+        item.setText("")
+        item.setSizeHint(QSize(0, 68))
+        self.list_widget.addItem(item)
+        self.list_widget.setItemWidget(item, self._build_task_item_widget(path, status))
+
+    def _build_task_item_widget(self, path: Path, status: str) -> QWidget:
+        row = QWidget()
+        row.setObjectName("TaskQueueItem")
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(10)
+
+        thumb = QLabel(path.suffix.upper().lstrip(".")[:4] or "IMG")
+        thumb.setObjectName("TaskThumb")
+        thumb.setAlignment(Qt.AlignCenter)
+        thumb.setFixedSize(42, 42)
+        layout.addWidget(thumb)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(4)
+        name_label = QLabel(path.name)
+        name_label.setObjectName("TaskName")
+        status_label = QLabel(status)
+        status_label.setObjectName("TaskStatus")
+        progress = QProgressBar()
+        progress.setObjectName("TaskMiniProgress")
+        progress.setRange(0, 100)
+        progress.setTextVisible(False)
+        progress.setFixedHeight(6)
+        progress.setValue(self._status_progress(status))
+        text_col.addWidget(name_label)
+        text_col.addWidget(status_label)
+        text_col.addWidget(progress)
+        layout.addLayout(text_col, 1)
+        return row
+
+    def _status_progress(self, status: str) -> int:
+        if "完成" in status or "成功" in status or "Done" in status:
+            return 100
+        if "处理" in status or "运行" in status:
+            return 48
+        if "失败" in status:
+            return 100
+        return 0
+
+    def _refresh_summary(self) -> None:
+        total = len(self.files)
+        running = sum(1 for status in self.statuses if "处理" in status or "运行" in status)
+        waiting = sum(1 for status in self.statuses if "待" in status or "等待" in status)
+        self.count_label.setText(f"{total} 个任务")
+        self.running_label.setText(f"运行中 {running}")
+        self.waiting_label.setText(f"等待中 {waiting}")
 
     def selected_file(self) -> Path | None:
         row = self.list_widget.currentRow()
