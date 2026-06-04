@@ -23,6 +23,12 @@ from PySide6.QtWidgets import (
 from image_toolbox.core.config import AppConfig
 from image_toolbox.core.engine_settings import get_engine_settings_store, is_engine_enabled, is_model_enabled
 from image_toolbox.core.ffmpeg_tools import media_fps, probe_media
+from image_toolbox.core.animated_tasks import (
+    AnimatedMediaTask,
+    AnimatedProcessSettings,
+    is_animated_image,
+    read_animated_info,
+)
 from image_toolbox.core.media_tasks import VideoMediaTask, VideoProcessSettings, list_rife_models
 from image_toolbox.core.super_resolution import (
     SuperResolutionBatchTask,
@@ -41,7 +47,7 @@ from image_toolbox.ui.widgets import NoWheelSpinBox as QSpinBox
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
-ANIMATED_EXTENSIONS = {".gif", ".apng"}
+ANIMATED_EXTENSIONS = {".gif", ".webp", ".png", ".apng"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 
 
@@ -77,6 +83,9 @@ class SuperResolutionFeature(ToolFeature):
         self.output_info_label: QLabel | None = None
         self.animated_hint_label: QLabel | None = None
         self.video_hint_label: QLabel | None = None
+        self.animated_format_combo: QComboBox | None = None
+        self.animated_fps_spin: QDoubleSpinBox | None = None
+        self.preserve_loop_checkbox: QCheckBox | None = None
         self.keep_audio_checkbox: QCheckBox | None = None
         self.keep_temp_checkbox: QCheckBox | None = None
         self.video_fps_spin: QDoubleSpinBox | None = None
@@ -109,7 +118,7 @@ class SuperResolutionFeature(ToolFeature):
         header.addLayout(title_block, 1)
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("图片增强", "image")
-        self.mode_combo.addItem("动图增强（预留）", "animated")
+        self.mode_combo.addItem("动图增强", "animated")
         self.mode_combo.addItem("视频增强与 AI 插帧（预留）", "video")
         header.addWidget(QLabel("任务类型"))
         header.addWidget(self.mode_combo)
@@ -206,6 +215,24 @@ class SuperResolutionFeature(ToolFeature):
         self.quality_spin.setValue(self.config.get("quality", 95, int))
         self.quality_spin.valueChanged.connect(self._refresh_preview)
         form.addRow("图片质量", self.quality_spin)
+        self.animated_format_combo = QComboBox()
+        self.animated_format_combo.addItem("GIF", "gif")
+        self.animated_format_combo.addItem("WebP", "webp")
+        self.animated_format_combo.addItem("APNG", "apng")
+        self.animated_format_combo.setCurrentIndex(max(0, self.animated_format_combo.findData(self.config.get("animated_output_format", "gif", str))))
+        self.animated_format_combo.currentIndexChanged.connect(self._refresh_preview)
+        form.addRow("动图输出格式", self.animated_format_combo)
+        self.animated_fps_spin = QDoubleSpinBox()
+        self.animated_fps_spin.setRange(0, 120)
+        self.animated_fps_spin.setDecimals(3)
+        self.animated_fps_spin.setSingleStep(1)
+        self.animated_fps_spin.setValue(self.config.get("animated_output_fps", 0.0, float))
+        self.animated_fps_spin.setToolTip("0 表示保留原始帧延迟。")
+        self.animated_fps_spin.valueChanged.connect(self._refresh_preview)
+        form.addRow("动图输出 FPS", self.animated_fps_spin)
+        self.preserve_loop_checkbox = QCheckBox("保留原循环次数")
+        self.preserve_loop_checkbox.setChecked(self.config.get("animated_preserve_loop", True, bool))
+        form.addRow("动图循环", self.preserve_loop_checkbox)
         self.video_fps_spin = QDoubleSpinBox()
         self.video_fps_spin.setRange(0, 240)
         self.video_fps_spin.setDecimals(3)
@@ -220,7 +247,7 @@ class SuperResolutionFeature(ToolFeature):
         self.keep_temp_checkbox = QCheckBox("保留临时帧目录（调试用）")
         self.keep_temp_checkbox.setChecked(self.config.get("keep_temp", False, bool))
         form.addRow("临时文件", self.keep_temp_checkbox)
-        self.animated_hint_label = QLabel("动图增强、逐帧超分和帧补偿将在后续版本开放。")
+        self.animated_hint_label = QLabel("动图已支持 GIF / WebP / APNG 信息读取、拆帧、逐帧处理和重新合成。")
         self.animated_hint_label.setObjectName("MutedText")
         self.video_hint_label = QLabel("视频任务已支持基础拆帧、图片引擎逐帧超分、RIFE 插帧和 MP4 合成。")
         self.video_hint_label.setObjectName("MutedText")
@@ -455,16 +482,18 @@ class SuperResolutionFeature(ToolFeature):
     def create_processor(self, files: list[Path]) -> Callable[[Path, Callable[[str], None]], Path]:
         raise NotImplementedError("智能媒体增强使用专用任务执行。")
 
-    def create_task(self, files: list[Path]) -> SuperResolutionBatchTask:
+    def create_task(self, files: list[Path]) -> SuperResolutionBatchTask | VideoMediaTask | AnimatedMediaTask:
         actual_files = self.get_workbench_files() or files
         image_files = [path for path in actual_files if self._media_type(path) == "图片"]
         video_files = [path for path in actual_files if self._media_type(path) == "视频"]
         animated_files = [path for path in actual_files if self._media_type(path) == "动图"]
+        active_types = sum(1 for group in [image_files, video_files, animated_files] if group)
+        if active_types > 1:
+            raise ValueError("请分开执行图片、动图和视频任务，当前版本暂不支持混合队列。")
         if animated_files:
-            names = "、".join(path.name for path in animated_files[:3])
-            raise ValueError(f"动图流程仍在预留阶段，暂不执行：{names}")
-        if image_files and video_files:
-            raise ValueError("请分开执行图片任务和视频任务，当前版本暂不支持混合队列。")
+            settings = self._collect_animated_settings()
+            self._save_animated_settings(settings)
+            return AnimatedMediaTask(animated_files, settings)
         if video_files:
             settings = self._collect_video_settings()
             tool_manager = get_tool_manager()
@@ -525,6 +554,38 @@ class SuperResolutionFeature(ToolFeature):
             upscale_settings=frame_upscale_settings,
         )
 
+    def _collect_animated_settings(self) -> AnimatedProcessSettings:
+        upscale_settings = self._collect_settings()
+        frame_upscale_settings = SuperResolutionSettings(
+            engine_id=upscale_settings.engine_id,
+            output_dir=upscale_settings.output_dir,
+            model_name=upscale_settings.model_name,
+            scale=upscale_settings.scale,
+            output_format="png",
+            keep_original_format=False,
+            quality=95,
+            tile_mode=upscale_settings.tile_mode,
+            tile_size=upscale_settings.tile_size,
+            gpu_id=upscale_settings.gpu_id,
+            threads=upscale_settings.threads,
+            use_tta=upscale_settings.use_tta,
+            low_memory_mode=upscale_settings.low_memory_mode,
+            conflict_strategy="overwrite",
+            noise_level=upscale_settings.noise_level,
+            syncgap_mode=upscale_settings.syncgap_mode,
+        )
+        upscale_enabled = self.upscale_enabled_checkbox.isChecked() if self.upscale_enabled_checkbox else False
+        return AnimatedProcessSettings(
+            output_dir=upscale_settings.output_dir,
+            output_format=self.animated_format_combo.currentData() if self.animated_format_combo else "gif",
+            keep_temp=self.keep_temp_checkbox.isChecked() if self.keep_temp_checkbox else False,
+            enable_upscale=upscale_enabled,
+            output_fps=self.animated_fps_spin.value() if self.animated_fps_spin else 0.0,
+            preserve_loop=self.preserve_loop_checkbox.isChecked() if self.preserve_loop_checkbox else True,
+            conflict_strategy=self.conflict_combo.currentData() if self.conflict_combo else "rename",
+            upscale_settings=frame_upscale_settings if upscale_enabled else None,
+        )
+
     def _collect_settings(self) -> SuperResolutionSettings:
         output_dir = Path(self.output_edit.text() if self.output_edit else "output")
         output_format = self.format_combo.currentData() if self.format_combo else "original"
@@ -577,6 +638,15 @@ class SuperResolutionFeature(ToolFeature):
         self.config.set("interpolation_gpu_id", settings.interpolation_gpu_id)
         self.config.set("interpolation_tta", settings.interpolation_tta)
         self.config.set("video_output_fps", settings.output_fps)
+
+    def _save_animated_settings(self, settings: AnimatedProcessSettings) -> None:
+        if settings.upscale_settings:
+            self._save_settings(settings.upscale_settings)
+        self.config.set("upscale_enabled", settings.enable_upscale)
+        self.config.set("animated_output_format", settings.output_format)
+        self.config.set("animated_output_fps", settings.output_fps)
+        self.config.set("animated_preserve_loop", settings.preserve_loop)
+        self.config.set("keep_temp", settings.keep_temp)
 
     def update_file_context(self, files: list[Path], selected_file: Path | None, logger: Callable[[str], None] | None = None) -> None:
         if not self._files and files:
@@ -728,6 +798,35 @@ class SuperResolutionFeature(ToolFeature):
             return
         selected = self._selected_file or self._files[0]
         media_type = self._media_type(selected)
+        if media_type == "动图":
+            try:
+                info = read_animated_info(selected)
+                scale = self.scale_combo.currentData() if self.scale_combo else 4
+                upscale_enabled = self.upscale_enabled_checkbox.isChecked() if self.upscale_enabled_checkbox else False
+                output_width = info.width * int(scale) if upscale_enabled else info.width
+                output_height = info.height * int(scale) if upscale_enabled else info.height
+                output_format = self.animated_format_combo.currentData() if self.animated_format_combo else "gif"
+                output_fps = self.animated_fps_spin.value() if self.animated_fps_spin else 0.0
+                fps_text = f"{info.fps:.3f}" if info.fps else "按帧延迟"
+                output_fps_text = f"{output_fps:.3f}" if output_fps > 0 else "保留原帧延迟"
+                self.size_label.setText(
+                    f"文件数量：{len(self._files)}\n当前参考动图：{selected.name}\n"
+                    f"格式：{info.input_format}\n原始尺寸：{info.width} x {info.height}\n"
+                    f"帧数：{info.frame_count}\nFPS：{fps_text}\n时长：{info.duration_ms / 1000:.2f}s\n"
+                    f"循环次数：{info.loop_count}\n透明通道：{'是' if info.has_alpha else '否'}\n"
+                    f"预计输出尺寸：{output_width} x {output_height}"
+                )
+                self.output_info_label.setText(
+                    f"动图输出格式：{str(output_format).upper()}\n输出 FPS：{output_fps_text}\n"
+                    f"处理模式：{'逐帧 AI 超分' if upscale_enabled else '不处理，仅重新合成'}\n"
+                    f"文件大小受帧数、透明通道、格式、调色板和质量影响较大，仅供参考。"
+                )
+            except Exception as exc:
+                self.size_label.setText(f"当前参考文件：{selected.name}\n动图读取失败：{exc}")
+                self.output_info_label.setText("请确认文件是 GIF、动态 WebP 或 APNG。静态图片不会作为动图处理。")
+                if logger:
+                    logger(f"动图读取失败：{selected.name}，原因：{exc}")
+            return
         if media_type != "图片":
             interpolation_enabled = self.interpolation_enabled_checkbox.isChecked() if self.interpolation_enabled_checkbox else False
             interpolation_scale = self.interpolation_scale_combo.currentData() if self.interpolation_scale_combo else 2
@@ -778,7 +877,14 @@ class SuperResolutionFeature(ToolFeature):
         return output_format.upper()
 
     def _read_size_text(self, path: Path) -> str:
-        if self._media_type(path) != "图片":
+        media_type = self._media_type(path)
+        if media_type == "动图":
+            try:
+                info = read_animated_info(path)
+                return f"{info.width} x {info.height} / {info.frame_count} 帧"
+            except Exception:
+                return "读取失败"
+        if media_type != "图片":
             return "后续识别"
         try:
             width, height, _fmt = read_image_info(path)
@@ -787,7 +893,16 @@ class SuperResolutionFeature(ToolFeature):
             return "读取失败"
 
     def _output_size_text(self, path: Path, scale: int) -> str:
-        if self._media_type(path) != "图片":
+        media_type = self._media_type(path)
+        if media_type == "动图":
+            try:
+                info = read_animated_info(path)
+                upscale_enabled = self.upscale_enabled_checkbox.isChecked() if self.upscale_enabled_checkbox else False
+                applied_scale = int(scale) if upscale_enabled else 1
+                return f"{info.width * applied_scale} x {info.height * applied_scale} / {info.frame_count} 帧"
+            except Exception:
+                return "未知"
+        if media_type != "图片":
             return "后续计算"
         try:
             width, height, _fmt = read_image_info(path)
@@ -797,10 +912,13 @@ class SuperResolutionFeature(ToolFeature):
 
     def _media_type(self, path: Path) -> str:
         suffix = path.suffix.lower()
+        if suffix in ANIMATED_EXTENSIONS:
+            if is_animated_image(path):
+                return "动图"
+            if suffix in IMAGE_EXTENSIONS:
+                return "图片"
         if suffix in IMAGE_EXTENSIONS:
             return "图片"
-        if suffix in ANIMATED_EXTENSIONS:
-            return "动图"
         if suffix in VIDEO_EXTENSIONS:
             return "视频"
         return "未知"
