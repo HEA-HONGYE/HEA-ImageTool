@@ -30,6 +30,7 @@ from image_toolbox.core.animated_tasks import (
     read_animated_info,
 )
 from image_toolbox.core.media_tasks import VideoMediaTask, VideoProcessSettings, list_rife_models
+from image_toolbox.core.media_task_utils import clear_media_task_cache, format_bytes
 from image_toolbox.core.super_resolution import (
     SuperResolutionBatchTask,
     SuperResolutionSettings,
@@ -164,11 +165,13 @@ class SuperResolutionFeature(ToolFeature):
         remove_button = QPushButton("删除选中")
         clear_button = QPushButton("清空")
         open_output_button = QPushButton("打开输出目录")
+        clear_cache_button = QPushButton("清理媒体缓存")
         add_button.clicked.connect(self.choose_files)
         remove_button.clicked.connect(self.remove_selected_file)
         clear_button.clicked.connect(self.clear_files)
         open_output_button.clicked.connect(self._open_output_from_page)
-        for button in [remove_button, clear_button, open_output_button]:
+        clear_cache_button.clicked.connect(self._clear_media_cache_from_page)
+        for button in [remove_button, clear_button, open_output_button, clear_cache_button]:
             button.setObjectName("GhostButton")
         row.addWidget(self.file_count_label)
         row.addWidget(add_button)
@@ -187,6 +190,7 @@ class SuperResolutionFeature(ToolFeature):
         self.engine_combo.currentIndexChanged.connect(self._on_engine_changed)
         row.addWidget(self.engine_combo, 1)
         row.addStretch()
+        row.addWidget(clear_cache_button)
         row.addWidget(open_output_button)
         return row
 
@@ -667,6 +671,12 @@ class SuperResolutionFeature(ToolFeature):
         output_dir = self.get_output_dir() or Path.cwd() / "output"
         output_dir.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_dir.resolve())))
+
+    def _clear_media_cache_from_page(self) -> None:
+        removed, released = clear_media_task_cache()
+        message = f"已清理媒体缓存：{removed} 个任务目录，释放 {format_bytes(released)}。"
+        if self.output_info_label:
+            self.output_info_label.setText(message)
 
     def _on_engine_changed(self, *_args: object) -> None:
         self._refresh_engine_options()
