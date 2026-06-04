@@ -24,14 +24,34 @@ from PySide6.QtWidgets import (
 )
 
 from image_toolbox.core.engine_settings import EngineSettings, ModelSettings, get_engine_settings_store
-from image_toolbox.core.model_library import detect_external_dependencies, import_custom_model, migrate_model_library
-from image_toolbox.core.paths import get_engine_models_dir, get_models_root
+from image_toolbox.core.media_task_utils import format_bytes
+from image_toolbox.core.model_library import (
+    detect_external_dependencies,
+    import_custom_model,
+    list_interpolation_model_info,
+    migrate_model_library,
+)
+from image_toolbox.core.paths import get_engine_models_dir, get_models_root, get_video_interpolation_models_dir
+from image_toolbox.core.tool_manager import get_tool_manager
 from image_toolbox.core.upscale_engines import DEFAULT_ENGINE_MANAGER
 from image_toolbox.ui.widgets import NoWheelComboBox as QComboBox
 from image_toolbox.ui.widgets import NoWheelSpinBox as QSpinBox
 
 
 ENGINE_TAB_ORDER = ["waifu2x", "anime4k", "realesrgan", "realcugan", "srmd", "realsr"]
+VIDEO_INTERPOLATION_TAB_ORDER = ["rife", "ifrnet", "cain", "dain"]
+VIDEO_INTERPOLATION_DISPLAY = {
+    "rife": "RIFE",
+    "ifrnet": "IFRNet",
+    "cain": "CAIN",
+    "dain": "DAIN",
+}
+VIDEO_INTERPOLATION_HINTS = {
+    "rife": "推荐使用 rife-v4.6，适合通用视频插帧。",
+    "ifrnet": "适合高质量插帧，速度通常比轻量模型慢。",
+    "cain": "兼容性较好；当前命令行不支持 TTA。",
+    "dain": "经典插帧方案，速度较慢，建议先用短片测试；不支持 TTA。",
+}
 
 
 class EngineSettingsPanel(QWidget):
@@ -39,7 +59,11 @@ class EngineSettingsPanel(QWidget):
         super().__init__()
         self.store = get_engine_settings_store()
         self.widgets: dict[str, dict[str, Any]] = {}
+        self.video_widgets: dict[str, dict[str, Any]] = {}
         self.default_image_combo: QComboBox | None = None
+        self.default_animated_combo: QComboBox | None = None
+        self.default_video_combo: QComboBox | None = None
+        self.default_interpolation_combo: QComboBox | None = None
         self.image_threads_spin: QSpinBox | None = None
         self.animated_threads_spin: QSpinBox | None = None
         self.video_threads_spin: QSpinBox | None = None
@@ -49,6 +73,7 @@ class EngineSettingsPanel(QWidget):
         self.multi_gpu_tile_spin: QSpinBox | None = None
         self.status_label: QLabel | None = None
         self.tabs: QTabWidget | None = None
+        self.video_tabs: QTabWidget | None = None
         self._build()
 
     def _build(self) -> None:
@@ -58,7 +83,7 @@ class EngineSettingsPanel(QWidget):
 
         title = QLabel("引擎设置")
         title.setObjectName("PanelTitle")
-        hint = QLabel("管理图片超分引擎、模型、默认参数和高级选项。动态图片与视频引擎设置会在后续版本开放。")
+        hint = QLabel("管理默认处理引擎、项目模型库、图片超分引擎和视频插帧引擎。")
         hint.setObjectName("MutedText")
         hint.setWordWrap(True)
         layout.addWidget(title)
@@ -66,12 +91,23 @@ class EngineSettingsPanel(QWidget):
         layout.addWidget(self._build_top_bar())
         layout.addWidget(self._build_model_library_bar())
 
+        image_group = QGroupBox("图片超分引擎")
+        image_layout = QVBoxLayout(image_group)
         self.tabs = QTabWidget()
         engines = {engine.engine_id: engine for engine in DEFAULT_ENGINE_MANAGER.list_engines()}
         for engine_id in ENGINE_TAB_ORDER:
             if engine_id in engines:
                 self.tabs.addTab(self._build_engine_tab(engines[engine_id]), engines[engine_id].display_name)
-        layout.addWidget(self.tabs, 1)
+        image_layout.addWidget(self.tabs)
+        layout.addWidget(image_group, 2)
+
+        video_group = QGroupBox("视频插帧引擎")
+        video_layout = QVBoxLayout(video_group)
+        self.video_tabs = QTabWidget()
+        for engine_id in VIDEO_INTERPOLATION_TAB_ORDER:
+            self.video_tabs.addTab(self._build_interpolation_engine_tab(engine_id), VIDEO_INTERPOLATION_DISPLAY[engine_id])
+        video_layout.addWidget(self.video_tabs)
+        layout.addWidget(video_group, 1)
         layout.addWidget(self._build_bottom_bar())
 
     def _build_top_bar(self) -> QWidget:
@@ -82,12 +118,21 @@ class EngineSettingsPanel(QWidget):
         for engine in DEFAULT_ENGINE_MANAGER.list_engines():
             self.default_image_combo.addItem(engine.display_name, engine.engine_id)
         self.default_image_combo.setCurrentIndex(max(0, self.default_image_combo.findData(self.store.global_settings.default_image_engine)))
-        animated_combo = QComboBox()
-        animated_combo.addItem("后续版本支持", "")
-        animated_combo.setEnabled(False)
-        video_combo = QComboBox()
-        video_combo.addItem("后续版本支持", "")
-        video_combo.setEnabled(False)
+        self.default_animated_combo = QComboBox()
+        self.default_video_combo = QComboBox()
+        for combo, default_value in [
+            (self.default_animated_combo, self.store.global_settings.default_animated_engine or self.store.global_settings.default_image_engine),
+            (self.default_video_combo, self.store.global_settings.default_video_engine or self.store.global_settings.default_image_engine),
+        ]:
+            for engine in DEFAULT_ENGINE_MANAGER.list_engines():
+                combo.addItem(engine.display_name, engine.engine_id)
+            combo.setCurrentIndex(max(0, combo.findData(default_value)))
+        self.default_interpolation_combo = QComboBox()
+        for engine_id in VIDEO_INTERPOLATION_TAB_ORDER:
+            self.default_interpolation_combo.addItem(VIDEO_INTERPOLATION_DISPLAY[engine_id], engine_id)
+        self.default_interpolation_combo.setCurrentIndex(
+            max(0, self.default_interpolation_combo.findData(self.store.global_settings.default_video_interpolation_engine))
+        )
         optimize_button = QPushButton("优化设定")
         optimize_button.setEnabled(False)
         help_button = QPushButton("帮助")
@@ -95,9 +140,11 @@ class EngineSettingsPanel(QWidget):
         row.addWidget(QLabel("图片"))
         row.addWidget(self.default_image_combo, 1)
         row.addWidget(QLabel("动态图片"))
-        row.addWidget(animated_combo, 1)
-        row.addWidget(QLabel("视频"))
-        row.addWidget(video_combo, 1)
+        row.addWidget(self.default_animated_combo, 1)
+        row.addWidget(QLabel("视频超分"))
+        row.addWidget(self.default_video_combo, 1)
+        row.addWidget(QLabel("视频插帧"))
+        row.addWidget(self.default_interpolation_combo, 1)
         row.addWidget(optimize_button)
         row.addWidget(help_button)
         return group
@@ -151,8 +198,8 @@ class EngineSettingsPanel(QWidget):
         form.addRow("推荐场景", QLabel(engine.recommendation()))
         layout.addWidget(status_group)
 
-        params_group = QGroupBox(f"{engine.display_name} 专属参数")
-        params = QFormLayout(params_group)
+        defaults_group = QGroupBox("默认参数")
+        params = QFormLayout(defaults_group)
         model_combo = QComboBox()
         scale_combo = QComboBox()
         for scale in engine.supported_scales:
@@ -186,14 +233,21 @@ class EngineSettingsPanel(QWidget):
         params.addRow("默认模型", model_combo)
         params.addRow("默认倍率", scale_combo)
         params.addRow("块大小 Tile（0=自动）", tile_spin)
-        params.addRow("TTA", tta_checkbox)
         params.addRow("GPU ID", self._gpu_row(gpu_edit))
         params.addRow("低显存", low_memory)
-        params.addRow("默认降噪", noise_combo)
-        params.addRow("SyncGap", syncgap_combo)
         params.addRow("默认输出格式", format_combo)
-        self._add_engine_specific_rows(engine.engine_id, params, settings)
-        layout.addWidget(params_group)
+        layout.addWidget(defaults_group)
+
+        advanced_group = QGroupBox("高级参数")
+        advanced_group.setCheckable(True)
+        advanced_group.setChecked(False)
+        advanced = QFormLayout(advanced_group)
+        advanced.addRow("TTA", tta_checkbox)
+        advanced.addRow("默认降噪", noise_combo)
+        advanced.addRow("SyncGap", syncgap_combo)
+        self._add_engine_specific_rows(engine.engine_id, advanced, settings)
+        self._make_collapsible(advanced_group, False)
+        layout.addWidget(advanced_group)
 
         models_group = QGroupBox("模型管理")
         models_layout = QVBoxLayout(models_group)
@@ -232,6 +286,127 @@ class EngineSettingsPanel(QWidget):
         test_button.clicked.connect(lambda _checked=False, e=engine, label=status: self._test_engine(e, label))
         save_button.clicked.connect(self.save_settings)
         self.scan_models(engine.engine_id)
+        return outer
+
+    def _make_collapsible(self, group: QGroupBox, expanded: bool = False) -> None:
+        group.setCheckable(True)
+        group.setChecked(expanded)
+
+        def update(checked: bool) -> None:
+            for child in group.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+                child.setVisible(checked)
+
+        group.toggled.connect(update)
+        update(expanded)
+
+    def _build_interpolation_engine_tab(self, engine_id: str) -> QWidget:
+        settings = self.store.get_engine(engine_id)
+        manager = get_tool_manager()
+        health = manager.check_tool(engine_id)
+        models = list_interpolation_model_info(engine_id)
+        model_root = get_video_interpolation_models_dir(engine_id)
+        display_name = VIDEO_INTERPOLATION_DISPLAY[engine_id]
+
+        outer = QScrollArea()
+        outer.setWidgetResizable(True)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setSpacing(14)
+        outer.setWidget(content)
+
+        basic_group = QGroupBox(f"{display_name} 基础设置")
+        basic = QFormLayout(basic_group)
+        enabled = QCheckBox("启用该插帧引擎")
+        enabled.setChecked(settings.enabled)
+        status_text = "可用" if health.available else f"不可用：{health.reason or '缺少可执行文件，请到工具管理中配置'}"
+        model_status = "模型可用" if any(model.available for model in models) else "缺少模型，请导入模型到项目模型库"
+        status = QLabel(f"{status_text}\n{model_status}")
+        status.setObjectName("MutedText")
+        status.setWordWrap(True)
+        exe_edit = QLineEdit(settings.executable_path or (str(health.path) if health.path else ""))
+        exe_edit.setPlaceholderText("缺 exe 时请到工具管理中配置，或在这里选择后保存。")
+        configured_model_dir = Path(settings.model_dir) if settings.model_dir else model_root
+        if "video_interpolation" not in configured_model_dir.as_posix():
+            configured_model_dir = model_root
+            settings.model_dir = str(model_root)
+        model_edit = QLineEdit(str(configured_model_dir))
+        model_edit.setReadOnly(True)
+        model_edit.setToolTip("视频插帧模型必须位于项目模型库，运行时不会引用外部素材库。")
+        basic.addRow("启用", enabled)
+        basic.addRow("引擎状态", status)
+        basic.addRow("exe 路径", self._path_row(exe_edit, "file"))
+        basic.addRow("模型目录", model_edit)
+        basic.addRow("推荐场景", QLabel(VIDEO_INTERPOLATION_HINTS[engine_id]))
+        layout.addWidget(basic_group)
+
+        defaults_group = QGroupBox("默认参数")
+        defaults = QFormLayout(defaults_group)
+        model_combo = QComboBox()
+        for model in models:
+            label = model.name or "默认模型目录"
+            suffix = "" if model.available else "（缺少模型文件）"
+            model_combo.addItem(label + suffix, model.name)
+        if model_combo.count() == 0:
+            model_combo.addItem("未导入模型", "")
+        model_combo.setCurrentIndex(max(0, model_combo.findData(settings.default_model)))
+        scale_combo = QComboBox()
+        for scale in [2, 4]:
+            scale_combo.addItem(f"{scale}x", scale)
+        scale_combo.setCurrentIndex(max(0, scale_combo.findData(settings.default_scale or 2)))
+        gpu_edit = QLineEdit(str(settings.extra_params.get("gpu_id", self.store.global_settings.gpu_id)))
+        tta_checkbox = QCheckBox("启用 TTA")
+        tta_supported = engine_id not in {"cain", "dain"}
+        tta_checkbox.setChecked(bool(settings.extra_params.get("use_tta", False)) and tta_supported)
+        tta_checkbox.setEnabled(tta_supported)
+        if not tta_supported:
+            tta_checkbox.setToolTip(f"{display_name} 当前不支持 TTA，任务会忽略该参数。")
+        defaults.addRow("默认模型", model_combo)
+        defaults.addRow("默认插帧倍率", scale_combo)
+        defaults.addRow("GPU ID", gpu_edit)
+        defaults.addRow("TTA", tta_checkbox)
+        layout.addWidget(defaults_group)
+
+        advanced_group = QGroupBox("高级参数")
+        advanced = QFormLayout(advanced_group)
+        threads_edit = QLineEdit(str(settings.extra_params.get("threads", "")))
+        threads_edit.setPlaceholderText("预留：后续版本接入")
+        threads_edit.setEnabled(False)
+        multi_gpu = QCheckBox("多显卡（后续版本支持）")
+        multi_gpu.setEnabled(False)
+        advanced.addRow("线程", threads_edit)
+        advanced.addRow("多显卡", multi_gpu)
+        advanced.addRow("说明", QLabel("插帧高级参数默认折叠；不支持的参数会保持禁用。"))
+        self._make_collapsible(advanced_group, False)
+        layout.addWidget(advanced_group)
+
+        models_group = QGroupBox("模型列表")
+        models_layout = QVBoxLayout(models_group)
+        table = QTableWidget(0, 5)
+        table.setHorizontalHeaderLabels(["模型", "路径", "文件数", "大小", "状态"])
+        table.verticalHeader().setVisible(False)
+        for model in models:
+            row = table.rowCount()
+            table.insertRow(row)
+            table.setItem(row, 0, QTableWidgetItem(model.name or "默认模型目录"))
+            table.setItem(row, 1, QTableWidgetItem(str(model.path)))
+            table.setItem(row, 2, QTableWidgetItem(str(model.file_count)))
+            table.setItem(row, 3, QTableWidgetItem(format_bytes(model.size_bytes)))
+            table.setItem(row, 4, QTableWidgetItem("可用" if model.available else "缺少模型文件"))
+        table.resizeColumnsToContents()
+        models_layout.addWidget(table)
+        layout.addWidget(models_group)
+
+        self.video_widgets[engine_id] = {
+            "enabled": enabled,
+            "status": status,
+            "exe": exe_edit,
+            "model_dir": model_edit,
+            "model_combo": model_combo,
+            "scale_combo": scale_combo,
+            "gpu": gpu_edit,
+            "tta": tta_checkbox,
+            "table": table,
+        }
         return outer
 
     def _add_engine_specific_rows(self, engine_id: str, form: QFormLayout, settings: EngineSettings) -> None:
@@ -500,6 +675,12 @@ class EngineSettingsPanel(QWidget):
     def save_settings(self) -> None:
         if self.default_image_combo:
             self.store.global_settings.default_image_engine = self.default_image_combo.currentData() or "realesrgan"
+        if self.default_animated_combo:
+            self.store.global_settings.default_animated_engine = self.default_animated_combo.currentData() or self.store.global_settings.default_image_engine
+        if self.default_video_combo:
+            self.store.global_settings.default_video_engine = self.default_video_combo.currentData() or self.store.global_settings.default_image_engine
+        if self.default_interpolation_combo:
+            self.store.global_settings.default_video_interpolation_engine = self.default_interpolation_combo.currentData() or "rife"
         if self.image_threads_spin:
             self.store.global_settings.image_threads = self.image_threads_spin.value()
         if self.animated_threads_spin:
@@ -567,6 +748,23 @@ class EngineSettingsPanel(QWidget):
             self.store.update_engine(settings)
             if hasattr(engine, "_health_cache"):
                 engine._health_cache = None
+        tool_manager = get_tool_manager()
+        for engine_id, widgets in self.video_widgets.items():
+            settings = self.store.get_engine(engine_id)
+            settings.enabled = widgets["enabled"].isChecked()
+            settings.executable_path = widgets["exe"].text().strip()
+            settings.model_dir = widgets["model_dir"].text().strip() or str(get_video_interpolation_models_dir(engine_id))
+            settings.default_model = widgets["model_combo"].currentData() or ""
+            settings.default_scale = widgets["scale_combo"].currentData() or 2
+            settings.default_tile = 0
+            settings.low_memory_default = False
+            settings.default_output_format = "png"
+            settings.extra_params["gpu_id"] = widgets["gpu"].text().strip() or self.store.global_settings.gpu_id
+            settings.extra_params["use_tta"] = widgets["tta"].isChecked()
+            self.store.update_engine(settings)
+            exe_path = Path(settings.executable_path) if settings.executable_path else None
+            if exe_path and exe_path.exists():
+                tool_manager.set_configured_path(engine_id, exe_path)
         self.store.save()
         if self.status_label:
             self.status_label.setText(f"已保存：{self.store.path}")

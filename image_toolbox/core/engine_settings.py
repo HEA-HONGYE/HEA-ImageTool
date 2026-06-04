@@ -50,6 +50,7 @@ class GlobalEngineSettings:
     default_image_engine: str = "realesrgan"
     default_animated_engine: str = ""
     default_video_engine: str = ""
+    default_video_interpolation_engine: str = "rife"
     image_threads: int = 4
     animated_threads: int = 8
     video_threads: int = 8
