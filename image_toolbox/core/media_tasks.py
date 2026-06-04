@@ -49,6 +49,39 @@ WORKFLOW_MODES = {
     "encode_only",
 }
 
+STATUS_LABELS = {
+    "waiting": "等待中",
+    "probing": "检测中",
+    "extracting": "拆帧中",
+    "processing": "超分中",
+    "interpolating": "插帧中",
+    "encoding": "合成中",
+    "completed": "已完成",
+    "failed": "失败",
+    "cancelled": "已取消",
+}
+
+STAGE_LABELS = {
+    "waiting": "等待中",
+    "probing": "检测中",
+    "extracting": "拆帧中",
+    "processing": "超分中",
+    "interpolating": "插帧中",
+    "encoding": "合成中",
+    "completed": "已完成",
+    "failed": "失败",
+    "cancelled": "已取消",
+}
+
+WORKFLOW_LABELS = {
+    "upscale_only": "仅超分",
+    "interpolate_only": "仅插帧",
+    "upscale_then_interpolate": "先超分后插帧",
+    "interpolate_then_upscale": "先插帧后超分",
+    "extract_only": "仅拆帧",
+    "encode_only": "仅合成",
+}
+
 
 @dataclass(frozen=True)
 class VideoProcessSettings:
@@ -283,7 +316,7 @@ class VideoMediaTask(QRunnable):
         if self._active_record and self._active_task_dir:
             update_task_state(self._active_task_dir, self._active_record, status, stage, failure_reason)
             if stage:
-                self._log(f"任务阶段：{stage}")
+                self._log(f"任务阶段：{STAGE_LABELS.get(stage, stage)}")
 
     def _emit_stage(self, stage: str, file_index: int, total_files: int, percent: int, frame_text: str = "") -> None:
         percent = max(0, min(100, percent))
@@ -566,7 +599,7 @@ class VideoMediaTask(QRunnable):
             self._log(f"使用 FFprobe：{ffprobe_path}")
         self._log(f"输出目录：{self.settings.output_dir}")
         self._debug(f"临时目录：{task_dir}")
-        self._log(f"处理模式：{self.settings.workflow_mode}")
+        self._log(f"处理模式：{WORKFLOW_LABELS.get(self.settings.workflow_mode, self.settings.workflow_mode)}")
         for step_index, step in enumerate(self._workflow_steps(), start=1):
             self._log(f"阶段{step_index}：{step}")
         self._set_state("probing", "probing")
