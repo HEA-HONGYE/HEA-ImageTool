@@ -328,6 +328,31 @@ def build_ifrnet_command(
     return command
 
 
+def build_cain_command(
+    executable_path: Path,
+    input_frames: Path,
+    output_frames: Path,
+    model_name: str = "cain",
+    gpu_id: str = "auto",
+    output_pattern: str = "%06d.png",
+) -> list[str]:
+    model_root = resolve_interpolation_model_dir("cain", model_name)
+    command = [
+        str(executable_path),
+        "-i",
+        str(input_frames.resolve()),
+        "-o",
+        str(output_frames.resolve()),
+        "-m",
+        str(model_root.resolve()),
+        "-f",
+        output_pattern,
+    ]
+    if gpu_id and gpu_id != "auto":
+        command.extend(["-g", gpu_id])
+    return command
+
+
 def import_custom_model(engine_id: str, source: Path, model_name: str | None = None, strategy: str = "rename") -> tuple[str, CopyStats]:
     ensure_project_model_dirs()
     clean_name = model_name or source.stem if source.is_file() else source.name

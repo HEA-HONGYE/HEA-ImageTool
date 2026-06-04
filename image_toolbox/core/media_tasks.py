@@ -12,7 +12,7 @@ from threading import Event
 from PySide6.QtCore import QRunnable, Slot
 
 from image_toolbox.core.ffmpeg_tools import has_audio_stream, media_fps, probe_media, require_ffmpeg_tools
-from image_toolbox.core.model_library import build_ifrnet_command, build_rife_command, list_interpolation_models
+from image_toolbox.core.model_library import build_cain_command, build_ifrnet_command, build_rife_command, list_interpolation_models
 from image_toolbox.core.media_task_utils import (
     MediaTaskRecord,
     TaskLogWriter,
@@ -80,6 +80,10 @@ def resolve_rife_executable() -> Path:
 
 def resolve_ifrnet_executable() -> Path:
     return get_tool_manager().require_tool("ifrnet")
+
+
+def resolve_cain_executable() -> Path:
+    return get_tool_manager().require_tool("cain")
 
 
 def _resolve_video_output_path(source: Path, settings: VideoProcessSettings) -> Path | None:
@@ -339,6 +343,8 @@ class VideoMediaTask(QRunnable):
         input_frames = _frame_files(frames_in)
         if len(input_frames) < 2:
             raise RuntimeError("插帧失败：至少需要 2 帧")
+        if self.settings.interpolation_engine == "cain":
+            return self._interpolate_frames_with_cain(input_frames, frames_in, frames_out, file_index, total_files)
         if self.settings.interpolation_engine == "rife":
             executable = resolve_rife_executable()
             command = build_rife_command(
@@ -378,6 +384,49 @@ class VideoMediaTask(QRunnable):
         self._run_command(command, "插帧处理", file_index, total_files, 60, 20, len(input_frames) * self.settings.interpolation_scale)
         if not _frame_files(frames_out):
             raise RuntimeError("插帧失败：没有生成插帧结果")
+        return frames_out
+
+    def _interpolate_frames_with_cain(
+        self,
+        input_frames: list[Path],
+        frames_in: Path,
+        frames_out: Path,
+        file_index: int,
+        total_files: int,
+    ) -> Path:
+        if self.settings.interpolation_scale not in {2, 4}:
+            raise RuntimeError(f"CAIN 仅支持 2x / 4x，当前：{self.settings.interpolation_scale}x")
+        executable = resolve_cain_executable()
+        self._set_state("interpolating", "interpolating")
+        self._log(f"使用 CAIN：{executable}")
+        frames_out.mkdir(parents=True, exist_ok=True)
+        passes = 1 if self.settings.interpolation_scale == 2 else 2
+        current_input = frames_in
+        for pass_index in range(1, passes + 1):
+            current_output = frames_out if pass_index == passes else frames_out.parent / "frames_cain_pass1"
+            current_output.mkdir(parents=True, exist_ok=True)
+            command = build_cain_command(
+                executable,
+                current_input,
+                current_output,
+                self.settings.interpolation_model or "cain",
+                self.settings.interpolation_gpu_id,
+                FRAME_PATTERN,
+            )
+            if self.settings.interpolation_tta:
+                self._log("CAIN 当前命令行不支持 TTA 参数，已忽略 TTA。")
+            if any("ai超分参考文件" in part or "waifu2x-extension-gui" in part for part in command):
+                raise RuntimeError("CAIN 命令包含素材库路径，已阻止启动")
+            target_frames = len(_frame_files(current_input)) * 2
+            self._log(
+                f"CAIN 插帧：第 {pass_index} / {passes} 轮，模型：{self.settings.interpolation_model or 'cain'}，预计输出 {target_frames} 帧"
+            )
+            base_percent = 60 + int((pass_index - 1) * 20 / passes)
+            span = max(1, int(20 / passes))
+            self._run_command(command, "插帧处理", file_index, total_files, base_percent, span, target_frames)
+            if not _frame_files(current_output):
+                raise RuntimeError(f"CAIN 插帧失败：第 {pass_index} 轮没有生成结果")
+            current_input = current_output
         return frames_out
 
     def _encode_video(

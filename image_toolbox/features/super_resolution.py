@@ -327,6 +327,7 @@ class SuperResolutionFeature(ToolFeature):
         self.interpolation_engine_combo = QComboBox()
         self.interpolation_engine_combo.addItem("RIFE", "rife")
         self.interpolation_engine_combo.addItem("IFRNet", "ifrnet")
+        self.interpolation_engine_combo.addItem("CAIN", "cain")
         self.interpolation_engine_combo.setCurrentIndex(max(0, self.interpolation_engine_combo.findData(self.config.get("interpolation_engine", "rife", str))))
         self.interpolation_engine_combo.currentIndexChanged.connect(self._on_interpolation_engine_changed)
         form.addRow("插帧引擎", self.interpolation_engine_combo)
