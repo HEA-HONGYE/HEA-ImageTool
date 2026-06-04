@@ -12,7 +12,7 @@ from threading import Event
 from PySide6.QtCore import QRunnable, Slot
 
 from image_toolbox.core.ffmpeg_tools import has_audio_stream, media_fps, probe_media, require_ffmpeg_tools
-from image_toolbox.core.model_library import build_rife_command, list_interpolation_models
+from image_toolbox.core.model_library import build_ifrnet_command, build_rife_command, list_interpolation_models
 from image_toolbox.core.media_task_utils import (
     MediaTaskRecord,
     TaskLogWriter,
@@ -66,8 +66,20 @@ def list_rife_models() -> list[str]:
     return list_interpolation_models("rife")
 
 
+def list_ifrnet_models() -> list[str]:
+    return list_interpolation_models("ifrnet")
+
+
+def list_interpolation_engine_models(engine_id: str) -> list[str]:
+    return list_interpolation_models(engine_id)
+
+
 def resolve_rife_executable() -> Path:
     return get_tool_manager().require_tool("rife")
+
+
+def resolve_ifrnet_executable() -> Path:
+    return get_tool_manager().require_tool("ifrnet")
 
 
 def _resolve_video_output_path(source: Path, settings: VideoProcessSettings) -> Path | None:
@@ -324,29 +336,45 @@ class VideoMediaTask(QRunnable):
         return frames_out
 
     def _interpolate_frames(self, frames_in: Path, frames_out: Path, file_index: int, total_files: int) -> Path:
-        if self.settings.interpolation_engine != "rife":
-            raise RuntimeError("当前版本只支持 RIFE 插帧执行")
         input_frames = _frame_files(frames_in)
         if len(input_frames) < 2:
             raise RuntimeError("插帧失败：至少需要 2 帧")
-        rife_exe = resolve_rife_executable()
+        if self.settings.interpolation_engine == "rife":
+            executable = resolve_rife_executable()
+            command = build_rife_command(
+                executable,
+                frames_in,
+                frames_out,
+                self.settings.interpolation_scale,
+                self.settings.interpolation_model,
+                self.settings.interpolation_gpu_id,
+                self.settings.interpolation_tta,
+                len(input_frames) * self.settings.interpolation_scale,
+                FRAME_PATTERN,
+            )
+            display_name = "RIFE"
+        elif self.settings.interpolation_engine == "ifrnet":
+            executable = resolve_ifrnet_executable()
+            command = build_ifrnet_command(
+                executable,
+                frames_in,
+                frames_out,
+                self.settings.interpolation_scale,
+                self.settings.interpolation_model,
+                self.settings.interpolation_gpu_id,
+                self.settings.interpolation_tta,
+                len(input_frames) * self.settings.interpolation_scale,
+                FRAME_PATTERN,
+            )
+            display_name = "IFRNet"
+        else:
+            raise RuntimeError(f"当前版本不支持插帧引擎：{self.settings.interpolation_engine}")
         self._set_state("interpolating", "interpolating")
-        self._log(f"使用 RIFE：{rife_exe}")
+        self._log(f"使用 {display_name}：{executable}")
         frames_out.mkdir(parents=True, exist_ok=True)
-        command = build_rife_command(
-            rife_exe,
-            frames_in,
-            frames_out,
-            self.settings.interpolation_scale,
-            self.settings.interpolation_model,
-            self.settings.interpolation_gpu_id,
-            self.settings.interpolation_tta,
-            len(input_frames) * self.settings.interpolation_scale,
-            FRAME_PATTERN,
-        )
         if any("ai超分参考文件" in part or "waifu2x-extension-gui" in part for part in command):
-            raise RuntimeError("RIFE 命令包含素材库路径，已阻止启动")
-        self._log(f"RIFE 插帧：{self.settings.interpolation_scale}x，模型：{self.settings.interpolation_model or '默认'}")
+            raise RuntimeError(f"{display_name} 命令包含素材库路径，已阻止启动")
+        self._log(f"{display_name} 插帧：{self.settings.interpolation_scale}x，模型：{self.settings.interpolation_model or '默认'}")
         self._run_command(command, "插帧处理", file_index, total_files, 60, 20, len(input_frames) * self.settings.interpolation_scale)
         if not _frame_files(frames_out):
             raise RuntimeError("插帧失败：没有生成插帧结果")
@@ -395,7 +423,8 @@ class VideoMediaTask(QRunnable):
                 self._active_record.extra["upscale_engine"] = self.settings.upscale_settings.engine_id
                 self._active_record.extra["upscale_model"] = self.settings.upscale_settings.model_name
             if self.settings.interpolation_enabled:
-                self._active_record.tool_paths["rife"] = str(resolve_rife_executable())
+                self._active_record.tool_paths[self.settings.interpolation_engine] = str(get_tool_manager().require_tool(self.settings.interpolation_engine))
+                self._active_record.extra["interpolation_engine"] = self.settings.interpolation_engine
                 self._active_record.extra["interpolation_model"] = self.settings.interpolation_model
             write_task_record(task_dir, self._active_record)
         self._log(f"使用 FFmpeg：{tools.ffmpeg}")

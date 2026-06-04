@@ -71,6 +71,15 @@ class CopyStats:
     logs: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class InterpolationModelInfo:
+    name: str
+    path: Path
+    file_count: int
+    size_bytes: int
+    available: bool
+
+
 def project_model_dir_for(engine_id: str, model_id: str = "") -> Path:
     if engine_id.startswith("video_interpolation/"):
         interpolation_id = engine_id.split("/", 1)[1]
@@ -208,6 +217,29 @@ def list_interpolation_models(engine_id: str) -> list[str]:
     return sorted(models)
 
 
+def list_interpolation_model_info(engine_id: str) -> list[InterpolationModelInfo]:
+    model_root = get_interpolation_model_root(engine_id)
+    if not model_root.exists():
+        return []
+    candidates = [child for child in model_root.iterdir() if child.is_dir()]
+    if not candidates and _contains_strict_model_files(model_root):
+        candidates = [model_root]
+    results: list[InterpolationModelInfo] = []
+    for model_dir in sorted(candidates, key=lambda item: item.name):
+        files = [path for path in model_dir.rglob("*") if path.is_file()]
+        strict_files = [path for path in files if path.suffix.lower() in STRICT_MODEL_FILE_SUFFIXES]
+        results.append(
+            InterpolationModelInfo(
+                name="" if model_dir == model_root else model_dir.name,
+                path=model_dir,
+                file_count=len(files),
+                size_bytes=sum(path.stat().st_size for path in files),
+                available=bool(strict_files),
+            )
+        )
+    return results
+
+
 def resolve_interpolation_model_dir(engine_id: str, model_name: str = "") -> Path:
     model_root = get_interpolation_model_root(engine_id)
     model_dir = model_root / model_name if model_name else model_root
@@ -240,6 +272,41 @@ def build_rife_command(
     output_pattern: str = "%06d.png",
 ) -> list[str]:
     model_root = resolve_interpolation_model_dir("rife", model_name)
+    target_count = target_frame_count or scale
+    command = [
+        str(executable_path),
+        "-i",
+        str(input_frames.resolve()),
+        "-o",
+        str(output_frames.resolve()),
+        "-m",
+        str(model_root.resolve()),
+        "-n",
+        str(target_count),
+        "-f",
+        output_pattern,
+    ]
+    if gpu_id and gpu_id != "auto":
+        command.extend(["-g", gpu_id])
+    if use_tta:
+        command.append("-x")
+    return command
+
+
+def build_ifrnet_command(
+    executable_path: Path,
+    input_frames: Path,
+    output_frames: Path,
+    scale: int = 2,
+    model_name: str = "",
+    gpu_id: str = "auto",
+    use_tta: bool = False,
+    target_frame_count: int | None = None,
+    output_pattern: str = "%06d.png",
+) -> list[str]:
+    if scale not in {2, 4}:
+        raise ValueError(f"IFRNet 仅支持 2x / 4x，当前：{scale}x")
+    model_root = resolve_interpolation_model_dir("ifrnet", model_name)
     target_count = target_frame_count or scale
     command = [
         str(executable_path),

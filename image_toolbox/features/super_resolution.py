@@ -29,7 +29,7 @@ from image_toolbox.core.animated_tasks import (
     is_animated_image,
     read_animated_info,
 )
-from image_toolbox.core.media_tasks import VideoMediaTask, VideoProcessSettings, list_rife_models
+from image_toolbox.core.media_tasks import VideoMediaTask, VideoProcessSettings, list_interpolation_engine_models
 from image_toolbox.core.media_task_utils import clear_media_task_cache, format_bytes
 from image_toolbox.core.super_resolution import (
     SuperResolutionBatchTask,
@@ -326,6 +326,9 @@ class SuperResolutionFeature(ToolFeature):
         form.addRow("开关", self.interpolation_enabled_checkbox)
         self.interpolation_engine_combo = QComboBox()
         self.interpolation_engine_combo.addItem("RIFE", "rife")
+        self.interpolation_engine_combo.addItem("IFRNet", "ifrnet")
+        self.interpolation_engine_combo.setCurrentIndex(max(0, self.interpolation_engine_combo.findData(self.config.get("interpolation_engine", "rife", str))))
+        self.interpolation_engine_combo.currentIndexChanged.connect(self._on_interpolation_engine_changed)
         form.addRow("插帧引擎", self.interpolation_engine_combo)
         self.interpolation_scale_combo = QComboBox()
         self.interpolation_scale_combo.addItem("2x", 2)
@@ -334,11 +337,11 @@ class SuperResolutionFeature(ToolFeature):
         self.interpolation_scale_combo.currentIndexChanged.connect(self._refresh_preview)
         form.addRow("插帧倍率", self.interpolation_scale_combo)
         self.interpolation_model_combo = QComboBox()
-        self._refresh_rife_models()
+        self._refresh_interpolation_models()
         form.addRow("模型", self.interpolation_model_combo)
         self.interpolation_gpu_edit = QLineEdit(self.config.get("interpolation_gpu_id", "auto"))
         form.addRow("GPU ID", self.interpolation_gpu_edit)
-        self.interpolation_tta_checkbox = QCheckBox("启用 TTA（如果当前 RIFE 版本支持）")
+        self.interpolation_tta_checkbox = QCheckBox("启用 TTA（如果当前插帧引擎支持）")
         self.interpolation_tta_checkbox.setChecked(self.config.get("interpolation_tta", False, bool))
         form.addRow("TTA", self.interpolation_tta_checkbox)
         self.interpolation_preview_label = QLabel("输出 FPS：自动")
@@ -348,20 +351,25 @@ class SuperResolutionFeature(ToolFeature):
         self._on_interpolation_changed()
         return group
 
-    def _refresh_rife_models(self) -> None:
+    def _refresh_interpolation_models(self) -> None:
         if not self.interpolation_model_combo:
             return
         saved_model = self.config.get("interpolation_model", "", str)
+        engine_id = self.interpolation_engine_combo.currentData() if self.interpolation_engine_combo else "rife"
         self.interpolation_model_combo.blockSignals(True)
         self.interpolation_model_combo.clear()
-        models = list_rife_models()
+        models = list_interpolation_engine_models(engine_id)
         if models:
             for model in models:
                 self.interpolation_model_combo.addItem(model or "默认模型目录", model)
             self.interpolation_model_combo.setCurrentIndex(max(0, self.interpolation_model_combo.findData(saved_model)))
         else:
-            self.interpolation_model_combo.addItem("未导入 RIFE 模型", "")
+            self.interpolation_model_combo.addItem(f"未导入 {str(engine_id).upper()} 模型", "")
         self.interpolation_model_combo.blockSignals(False)
+
+    def _on_interpolation_engine_changed(self, *_args: object) -> None:
+        self._refresh_interpolation_models()
+        self._refresh_preview()
 
     def _on_interpolation_changed(self, *_args: object) -> None:
         enabled = self.interpolation_enabled_checkbox.isChecked() if self.interpolation_enabled_checkbox else False
@@ -504,7 +512,7 @@ class SuperResolutionFeature(ToolFeature):
             tool_manager.require_tool("ffmpeg")
             tool_manager.require_tool("ffprobe")
             if settings.interpolation_enabled:
-                tool_manager.require_tool("rife")
+                tool_manager.require_tool(settings.interpolation_engine)
             self._save_video_settings(settings)
             return VideoMediaTask(video_files, settings)
         if self.upscale_enabled_checkbox and not self.upscale_enabled_checkbox.isChecked():
@@ -637,6 +645,7 @@ class SuperResolutionFeature(ToolFeature):
         self.config.set("keep_audio", settings.keep_audio)
         self.config.set("keep_temp", settings.keep_temp)
         self.config.set("interpolation_enabled", settings.interpolation_enabled)
+        self.config.set("interpolation_engine", settings.interpolation_engine)
         self.config.set("interpolation_scale", settings.interpolation_scale)
         self.config.set("interpolation_model", settings.interpolation_model)
         self.config.set("interpolation_gpu_id", settings.interpolation_gpu_id)
@@ -852,7 +861,7 @@ class SuperResolutionFeature(ToolFeature):
                 except Exception:
                     fps_text = "需要 ffprobe 才能预览"
             self.size_label.setText(
-                f"当前参考文件：{selected.name}\n类型：{media_type}\n处理模式：{mode_text}\nRIFE 倍率：{interpolation_scale}x\n输出 FPS：{fps_text}"
+                f"当前参考文件：{selected.name}\n类型：{media_type}\n处理模式：{mode_text}\n插帧倍率：{interpolation_scale}x\n输出 FPS：{fps_text}"
             )
             self.output_info_label.setText("视频输出大小受帧数、编码、插帧倍率、超分倍率和音频保留影响较大，仅供参考。")
             if self.interpolation_preview_label:

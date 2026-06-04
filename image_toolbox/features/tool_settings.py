@@ -44,7 +44,7 @@ class ToolSettingsPanel(QWidget):
 
         title = QLabel("工具管理")
         title.setObjectName("PanelTitle")
-        hint = QLabel("管理视频处理运行依赖：FFmpeg、FFprobe、RIFE。模型仍在项目模型库中管理，工具目录只放可执行程序和 DLL。")
+        hint = QLabel("管理视频处理运行依赖：FFmpeg、FFprobe、RIFE、IFRNet。模型仍在项目模型库中管理，工具目录只放可执行程序和 DLL。")
         hint.setObjectName("MutedText")
         hint.setWordWrap(True)
         layout.addWidget(title)
@@ -77,7 +77,7 @@ class ToolSettingsPanel(QWidget):
     def _build_path_group(self) -> QWidget:
         group = QGroupBox("手动配置路径")
         layout = QVBoxLayout(group)
-        for tool_id in ["ffmpeg", "ffprobe", "rife"]:
+        for tool_id in ["ffmpeg", "ffprobe", "rife", "ifrnet"]:
             definition = TOOL_DEFINITIONS[tool_id]
             row = QHBoxLayout()
             row.addWidget(QLabel(definition.display_name))
@@ -114,7 +114,7 @@ class ToolSettingsPanel(QWidget):
         health_map = self.manager.refresh()
         if self.table:
             self.table.setRowCount(0)
-            for row, tool_id in enumerate(["ffmpeg", "ffprobe", "rife"]):
+            for row, tool_id in enumerate(["ffmpeg", "ffprobe", "rife", "ifrnet"]):
                 health = health_map[tool_id]
                 self.table.insertRow(row)
                 values = [
