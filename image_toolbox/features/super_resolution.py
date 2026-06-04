@@ -74,7 +74,7 @@ INTERPOLATION_ENGINE_HINTS = {
     "rife": "RIFE：推荐使用 rife-v4.6。旧模型如 rife-v2 兼容性较弱，建议优先换到 v4.6。",
     "ifrnet": "IFRNet：适合高质量插帧，速度通常比轻量模型慢。",
     "cain": "CAIN：适合兼容模式，TTA 参数会自动忽略。",
-    "dain": "DAIN：经典插帧方案，TTA 参数会自动忽略。",
+    "dain": "DAIN：经典插帧方案，速度较慢，建议先用短片测试；TTA 参数会自动忽略。",
 }
 
 
@@ -88,6 +88,13 @@ class SuperResolutionFeature(ToolFeature):
         self.engine_settings_store = get_engine_settings_store()
         self.file_table: QTableWidget | None = None
         self.file_count_label: QLabel | None = None
+        self.media_group: QGroupBox | None = None
+        self.composition_group: QGroupBox | None = None
+        self.output_group: QGroupBox | None = None
+        self.upscale_group: QGroupBox | None = None
+        self.interpolation_group: QGroupBox | None = None
+        self.workflow_group: QGroupBox | None = None
+        self.advanced_group: QGroupBox | None = None
         self.mode_combo: QComboBox | None = None
         self.engine_combo: QComboBox | None = None
         self.preset_combo: QComboBox | None = None
@@ -160,8 +167,8 @@ class SuperResolutionFeature(ToolFeature):
 
         settings_row = QHBoxLayout()
         settings_row.setSpacing(10)
-        settings_row.addWidget(self._build_resolution_group(), 1)
         settings_row.addWidget(self._build_media_group(), 2)
+        settings_row.addWidget(self._build_composition_group(), 2)
         settings_row.addWidget(self._build_output_group(), 3)
         layout.addLayout(settings_row)
 
@@ -171,7 +178,9 @@ class SuperResolutionFeature(ToolFeature):
         enhancement_row.addWidget(self._build_interpolation_group(), 1)
         layout.addLayout(enhancement_row)
 
+        layout.addWidget(self._build_advanced_group())
         layout.addWidget(self._build_preview_group())
+        self._configure_video_groups()
         self.refresh_from_engine_settings()
         self._on_video_workflow_changed()
         return panel
@@ -240,7 +249,8 @@ class SuperResolutionFeature(ToolFeature):
         return group
 
     def _build_media_group(self) -> QWidget:
-        group = QGroupBox("图片 / 动图 / 视频参数")
+        group = QGroupBox("图片 / 动图参数")
+        self.media_group = group
         form = QFormLayout(group)
         self.format_combo = QComboBox()
         self.format_combo.currentIndexChanged.connect(self._on_format_changed)
@@ -268,23 +278,16 @@ class SuperResolutionFeature(ToolFeature):
         self.preserve_loop_checkbox = QCheckBox("保留原循环次数")
         self.preserve_loop_checkbox.setChecked(self.config.get("animated_preserve_loop", True, bool))
         form.addRow("动图循环", self.preserve_loop_checkbox)
-        self.video_workflow_combo = QComboBox()
-        self.video_workflow_combo.addItem("先超分后插帧", "upscale_then_interpolate")
-        self.video_workflow_combo.addItem("仅超分", "upscale_only")
-        self.video_workflow_combo.addItem("仅插帧", "interpolate_only")
-        self.video_workflow_combo.addItem("先插帧后超分", "interpolate_then_upscale")
-        self.video_workflow_combo.addItem("仅拆帧", "extract_only")
-        self.video_workflow_combo.addItem("仅合成", "encode_only")
-        self.video_workflow_combo.setCurrentIndex(max(0, self.video_workflow_combo.findData(self.config.get("video_workflow_mode", "upscale_then_interpolate", str))))
-        self.video_workflow_combo.currentIndexChanged.connect(self._on_video_workflow_changed)
-        form.addRow("视频处理模式", self.video_workflow_combo)
-        self.video_frame_dir_edit = QLineEdit(self.config.get("video_input_frame_dir", "", str))
-        frame_dir_button = QPushButton("选择帧目录")
-        frame_dir_button.clicked.connect(self._choose_video_frame_dir)
-        frame_dir_row = QHBoxLayout()
-        frame_dir_row.addWidget(self.video_frame_dir_edit)
-        frame_dir_row.addWidget(frame_dir_button)
-        form.addRow("仅合成帧目录", frame_dir_row)
+        self.animated_hint_label = QLabel("动图已支持 GIF / WebP / APNG 信息读取、拆帧、逐帧处理和重新合成。")
+        self.animated_hint_label.setObjectName("MutedText")
+        self.animated_hint_label.setWordWrap(True)
+        form.addRow("动图", self.animated_hint_label)
+        return group
+
+    def _build_composition_group(self) -> QWidget:
+        group = QGroupBox("合成设置")
+        self.composition_group = group
+        form = QFormLayout(group)
         self.video_fps_spin = QDoubleSpinBox()
         self.video_fps_spin.setRange(0, 240)
         self.video_fps_spin.setDecimals(3)
@@ -299,18 +302,15 @@ class SuperResolutionFeature(ToolFeature):
         self.keep_temp_checkbox = QCheckBox("保留临时帧目录（调试用）")
         self.keep_temp_checkbox.setChecked(self.config.get("keep_temp", False, bool))
         form.addRow("临时文件", self.keep_temp_checkbox)
-        self.animated_hint_label = QLabel("动图已支持 GIF / WebP / APNG 信息读取、拆帧、逐帧处理和重新合成。")
-        self.animated_hint_label.setObjectName("MutedText")
         self.video_hint_label = QLabel("视频任务已支持仅超分、仅插帧、超分后插帧、插帧后超分、仅拆帧和仅合成。")
         self.video_hint_label.setObjectName("MutedText")
-        self.animated_hint_label.setWordWrap(True)
         self.video_hint_label.setWordWrap(True)
-        form.addRow("动图", self.animated_hint_label)
         form.addRow("视频", self.video_hint_label)
         return group
 
     def _build_output_group(self) -> QWidget:
         group = QGroupBox("输出文件夹")
+        self.output_group = group
         form = QFormLayout(group)
         self.output_edit = QLineEdit(self.config.get("output_dir", str(Path.cwd() / "output")))
         browse_button = QPushButton("选择")
@@ -329,12 +329,17 @@ class SuperResolutionFeature(ToolFeature):
         keep_name.setEnabled(False)
         auto_folder = QCheckBox("自动创建输出文件夹")
         auto_folder.setChecked(True)
+        open_output_button = QPushButton("打开输出目录")
+        open_output_button.setObjectName("GhostButton")
+        open_output_button.clicked.connect(self._open_output_from_page)
         form.addRow("命名", keep_name)
         form.addRow("目录", auto_folder)
+        form.addRow("快捷操作", open_output_button)
         return group
 
     def _build_upscale_group(self) -> QWidget:
-        group = QGroupBox("AI 超分与增强参数")
+        group = QGroupBox("超分设置")
+        self.upscale_group = group
         form = QFormLayout(group)
         self.upscale_enabled_checkbox = QCheckBox("启用超分 / 图片增强")
         self.upscale_enabled_checkbox.setChecked(self.config.get("upscale_enabled", True, bool))
@@ -346,6 +351,9 @@ class SuperResolutionFeature(ToolFeature):
         form.addRow("引擎状态", self.engine_info_label)
         self.model_combo = QComboBox()
         form.addRow("模型", self.model_combo)
+        self.scale_combo = QComboBox()
+        self.scale_combo.currentIndexChanged.connect(self._refresh_preview)
+        form.addRow("放大倍率", self.scale_combo)
         self.noise_combo = QComboBox()
         form.addRow("降噪等级", self.noise_combo)
         self.syncgap_combo = QComboBox()
@@ -356,6 +364,9 @@ class SuperResolutionFeature(ToolFeature):
         self.tile_spin.setValue(self.config.get("tile_size", 0, int))
         self.tile_spin.valueChanged.connect(self._refresh_preview)
         form.addRow("Tile / 0 自动", self.tile_spin)
+        self.low_memory_checkbox = QCheckBox("低显存模式：速度较慢，但更稳定")
+        self.low_memory_checkbox.stateChanged.connect(self._refresh_preview)
+        form.addRow("稳定性", self.low_memory_checkbox)
         self.gpu_edit = QLineEdit(self.config.get("gpu_id", "auto"))
         form.addRow("GPU", self.gpu_edit)
         self.threads_edit = QLineEdit(self.config.get("threads", "1:2:2"))
@@ -366,7 +377,8 @@ class SuperResolutionFeature(ToolFeature):
         return group
 
     def _build_interpolation_group(self) -> QWidget:
-        group = QGroupBox("AI 插帧")
+        group = QGroupBox("插帧设置")
+        self.interpolation_group = group
         form = QFormLayout(group)
         self.interpolation_enabled_checkbox = QCheckBox("启用插帧")
         self.interpolation_enabled_checkbox.setChecked(self.config.get("interpolation_enabled", False, bool))
@@ -400,6 +412,19 @@ class SuperResolutionFeature(ToolFeature):
         self.interpolation_preview_label.setWordWrap(True)
         form.addRow("预览", self.interpolation_preview_label)
         self._on_interpolation_changed()
+        return group
+
+    def _build_advanced_group(self) -> QWidget:
+        group = QGroupBox("高级设置")
+        self.advanced_group = group
+        layout = QVBoxLayout(group)
+        hint = QLabel(
+            "普通任务通常不需要调整这里。\n"
+            "GPU ID、Tile、TTA 已按作用域放在“超分设置”和“插帧设置”中；未来的视频编码器、显卡策略和批处理高级参数会继续集中到这里。"
+        )
+        hint.setObjectName("MutedText")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
         return group
 
     def _refresh_interpolation_models(self) -> None:
@@ -441,6 +466,70 @@ class SuperResolutionFeature(ToolFeature):
         steps = VIDEO_WORKFLOW_STEPS.get(self._video_workflow_mode(), [])
         return "工作流预览：\n" + "\n↓\n".join(steps) if steps else "工作流预览：未知"
 
+    def _configure_video_groups(self) -> None:
+        for group in [
+            self.workflow_group,
+            self.upscale_group,
+            self.interpolation_group,
+            self.composition_group,
+            self.output_group,
+            self.advanced_group,
+        ]:
+            if not group:
+                continue
+            group.setStyleSheet("QGroupBox::title { font-weight: 600; }")
+            group.setCheckable(True)
+            group.toggled.connect(lambda checked, current_group=group: self._set_group_content_visible(current_group, checked))
+            group.setChecked(True)
+            self._set_group_content_visible(group, True)
+        if self.workflow_group:
+            self.workflow_group.setCheckable(False)
+        if self.output_group:
+            self.output_group.setChecked(True)
+        if self.advanced_group:
+            self._set_group_expanded(self.advanced_group, False, True)
+
+    def _set_group_content_visible(self, group: QGroupBox, visible: bool) -> None:
+        for child in group.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+            child.setVisible(visible)
+
+    def _set_group_expanded(self, group: QGroupBox | None, expanded: bool, enabled: bool = True, tooltip: str = "") -> None:
+        if not group:
+            return
+        group.blockSignals(True)
+        group.setChecked(expanded)
+        self._set_group_content_visible(group, expanded)
+        group.blockSignals(False)
+        group.setEnabled(enabled)
+        group.setToolTip("" if enabled else tooltip)
+
+    def _apply_video_group_state(self) -> None:
+        mode = self._video_workflow_mode()
+        needs_upscale = self._workflow_needs_upscale()
+        needs_interpolation = self._workflow_needs_interpolation()
+        needs_encode = self._workflow_needs_encode()
+        self._set_group_expanded(self.workflow_group, True, True)
+        self._set_group_expanded(
+            self.upscale_group,
+            needs_upscale,
+            needs_upscale,
+            "当前模式不需要超分。",
+        )
+        self._set_group_expanded(
+            self.interpolation_group,
+            needs_interpolation,
+            needs_interpolation,
+            "当前模式不需要插帧。",
+        )
+        self._set_group_expanded(
+            self.composition_group,
+            needs_encode,
+            needs_encode,
+            "仅拆帧模式不会合成视频。",
+        )
+        self._set_group_expanded(self.output_group, True, True)
+        self._set_group_expanded(self.advanced_group, False, True)
+
     def _interpolation_engine_hint(self) -> str:
         engine_id = self.interpolation_engine_combo.currentData() if self.interpolation_engine_combo else "rife"
         model_name = self.interpolation_model_combo.currentData() if self.interpolation_model_combo else ""
@@ -464,6 +553,7 @@ class SuperResolutionFeature(ToolFeature):
         needs_upscale = self._workflow_needs_upscale()
         needs_interpolation = self._workflow_needs_interpolation()
         needs_encode = self._workflow_needs_encode()
+        self._apply_video_group_state()
         if self.upscale_enabled_checkbox:
             self.upscale_enabled_checkbox.blockSignals(True)
             self.upscale_enabled_checkbox.setChecked(needs_upscale)
@@ -537,8 +627,28 @@ class SuperResolutionFeature(ToolFeature):
             self._refresh_preview()
 
     def _build_preview_group(self) -> QWidget:
-        group = QGroupBox("预计输出与视频工作流")
+        group = QGroupBox("工作流")
+        self.workflow_group = group
         layout = QVBoxLayout(group)
+        workflow_form = QFormLayout()
+        self.video_workflow_combo = QComboBox()
+        self.video_workflow_combo.addItem("先超分后插帧", "upscale_then_interpolate")
+        self.video_workflow_combo.addItem("仅超分", "upscale_only")
+        self.video_workflow_combo.addItem("仅插帧", "interpolate_only")
+        self.video_workflow_combo.addItem("先插帧后超分", "interpolate_then_upscale")
+        self.video_workflow_combo.addItem("仅拆帧", "extract_only")
+        self.video_workflow_combo.addItem("仅合成", "encode_only")
+        self.video_workflow_combo.setCurrentIndex(max(0, self.video_workflow_combo.findData(self.config.get("video_workflow_mode", "upscale_then_interpolate", str))))
+        self.video_workflow_combo.currentIndexChanged.connect(self._on_video_workflow_changed)
+        workflow_form.addRow("视频处理模式", self.video_workflow_combo)
+        self.video_frame_dir_edit = QLineEdit(self.config.get("video_input_frame_dir", "", str))
+        frame_dir_button = QPushButton("选择帧目录")
+        frame_dir_button.clicked.connect(self._choose_video_frame_dir)
+        frame_dir_row = QHBoxLayout()
+        frame_dir_row.addWidget(self.video_frame_dir_edit)
+        frame_dir_row.addWidget(frame_dir_button)
+        workflow_form.addRow("仅合成帧目录", frame_dir_row)
+        layout.addLayout(workflow_form)
         self.workflow_preview_label = QLabel("")
         self.workflow_preview_label.setObjectName("MutedText")
         self.workflow_preview_label.setWordWrap(True)
