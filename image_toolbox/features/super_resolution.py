@@ -30,6 +30,7 @@ from image_toolbox.core.animated_tasks import (
     read_animated_info,
 )
 from image_toolbox.core.media_tasks import VideoMediaTask, VideoProcessSettings, list_interpolation_engine_models
+from image_toolbox.core.model_library import resolve_interpolation_model_dir
 from image_toolbox.core.media_task_utils import clear_media_task_cache, format_bytes
 from image_toolbox.core.super_resolution import (
     SuperResolutionBatchTask,
@@ -90,6 +91,8 @@ class SuperResolutionFeature(ToolFeature):
         self.keep_audio_checkbox: QCheckBox | None = None
         self.keep_temp_checkbox: QCheckBox | None = None
         self.video_fps_spin: QDoubleSpinBox | None = None
+        self.video_workflow_combo: QComboBox | None = None
+        self.video_frame_dir_edit: QLineEdit | None = None
         self.interpolation_enabled_checkbox: QCheckBox | None = None
         self.interpolation_engine_combo: QComboBox | None = None
         self.interpolation_scale_combo: QComboBox | None = None
@@ -143,6 +146,7 @@ class SuperResolutionFeature(ToolFeature):
 
         layout.addWidget(self._build_preview_group())
         self.refresh_from_engine_settings()
+        self._on_video_workflow_changed()
         return panel
 
     def _build_file_area(self) -> QWidget:
@@ -237,6 +241,23 @@ class SuperResolutionFeature(ToolFeature):
         self.preserve_loop_checkbox = QCheckBox("保留原循环次数")
         self.preserve_loop_checkbox.setChecked(self.config.get("animated_preserve_loop", True, bool))
         form.addRow("动图循环", self.preserve_loop_checkbox)
+        self.video_workflow_combo = QComboBox()
+        self.video_workflow_combo.addItem("先超分后插帧", "upscale_then_interpolate")
+        self.video_workflow_combo.addItem("仅超分", "upscale_only")
+        self.video_workflow_combo.addItem("仅插帧", "interpolate_only")
+        self.video_workflow_combo.addItem("先插帧后超分", "interpolate_then_upscale")
+        self.video_workflow_combo.addItem("仅拆帧", "extract_only")
+        self.video_workflow_combo.addItem("仅合成", "encode_only")
+        self.video_workflow_combo.setCurrentIndex(max(0, self.video_workflow_combo.findData(self.config.get("video_workflow_mode", "upscale_then_interpolate", str))))
+        self.video_workflow_combo.currentIndexChanged.connect(self._on_video_workflow_changed)
+        form.addRow("视频处理模式", self.video_workflow_combo)
+        self.video_frame_dir_edit = QLineEdit(self.config.get("video_input_frame_dir", "", str))
+        frame_dir_button = QPushButton("选择帧目录")
+        frame_dir_button.clicked.connect(self._choose_video_frame_dir)
+        frame_dir_row = QHBoxLayout()
+        frame_dir_row.addWidget(self.video_frame_dir_edit)
+        frame_dir_row.addWidget(frame_dir_button)
+        form.addRow("仅合成帧目录", frame_dir_row)
         self.video_fps_spin = QDoubleSpinBox()
         self.video_fps_spin.setRange(0, 240)
         self.video_fps_spin.setDecimals(3)
@@ -253,7 +274,7 @@ class SuperResolutionFeature(ToolFeature):
         form.addRow("临时文件", self.keep_temp_checkbox)
         self.animated_hint_label = QLabel("动图已支持 GIF / WebP / APNG 信息读取、拆帧、逐帧处理和重新合成。")
         self.animated_hint_label.setObjectName("MutedText")
-        self.video_hint_label = QLabel("视频任务已支持基础拆帧、图片引擎逐帧超分、RIFE 插帧和 MP4 合成。")
+        self.video_hint_label = QLabel("视频任务已支持仅超分、仅插帧、超分后插帧、插帧后超分、仅拆帧和仅合成。")
         self.video_hint_label.setObjectName("MutedText")
         self.animated_hint_label.setWordWrap(True)
         self.video_hint_label.setWordWrap(True)
@@ -373,8 +394,37 @@ class SuperResolutionFeature(ToolFeature):
         self._refresh_interpolation_models()
         self._on_interpolation_changed()
 
+    def _video_workflow_mode(self) -> str:
+        return self.video_workflow_combo.currentData() if self.video_workflow_combo else "upscale_then_interpolate"
+
+    def _workflow_needs_upscale(self) -> bool:
+        return self._video_workflow_mode() in {"upscale_only", "upscale_then_interpolate", "interpolate_then_upscale"}
+
+    def _workflow_needs_interpolation(self) -> bool:
+        return self._video_workflow_mode() in {"interpolate_only", "upscale_then_interpolate", "interpolate_then_upscale"}
+
+    def _on_video_workflow_changed(self, *_args: object) -> None:
+        mode = self._video_workflow_mode()
+        needs_upscale = self._workflow_needs_upscale()
+        needs_interpolation = self._workflow_needs_interpolation()
+        if self.upscale_enabled_checkbox:
+            self.upscale_enabled_checkbox.blockSignals(True)
+            self.upscale_enabled_checkbox.setChecked(needs_upscale)
+            self.upscale_enabled_checkbox.setEnabled(mode not in {"extract_only", "encode_only", "interpolate_only"})
+            self.upscale_enabled_checkbox.blockSignals(False)
+        if self.interpolation_enabled_checkbox:
+            self.interpolation_enabled_checkbox.blockSignals(True)
+            self.interpolation_enabled_checkbox.setChecked(needs_interpolation)
+            self.interpolation_enabled_checkbox.blockSignals(False)
+        if self.video_frame_dir_edit:
+            self.video_frame_dir_edit.setEnabled(mode == "encode_only")
+        if self.keep_audio_checkbox:
+            self.keep_audio_checkbox.setEnabled(mode not in {"extract_only", "encode_only"})
+        self._on_interpolation_changed()
+        self._refresh_preview()
+
     def _on_interpolation_changed(self, *_args: object) -> None:
-        enabled = self.interpolation_enabled_checkbox.isChecked() if self.interpolation_enabled_checkbox else False
+        enabled = self._workflow_needs_interpolation()
         engine_id = self.interpolation_engine_combo.currentData() if self.interpolation_engine_combo else "rife"
         for widget in [
             self.interpolation_engine_combo,
@@ -390,6 +440,14 @@ class SuperResolutionFeature(ToolFeature):
             if not supports_tta:
                 self.interpolation_tta_checkbox.setChecked(False)
         self._refresh_preview()
+
+    def _choose_video_frame_dir(self) -> None:
+        if not self.video_frame_dir_edit:
+            return
+        directory = QFileDialog.getExistingDirectory(None, "选择仅合成输入帧目录", self.video_frame_dir_edit.text() or str(Path.cwd()))
+        if directory:
+            self.video_frame_dir_edit.setText(directory)
+            self._refresh_preview()
 
     def _build_preview_group(self) -> QWidget:
         group = QGroupBox("预计输出信息")
@@ -503,6 +561,14 @@ class SuperResolutionFeature(ToolFeature):
 
     def create_task(self, files: list[Path]) -> SuperResolutionBatchTask | VideoMediaTask | AnimatedMediaTask:
         actual_files = self.get_workbench_files() or files
+        workflow_mode = self._video_workflow_mode()
+        if workflow_mode == "encode_only" and not actual_files:
+            settings = self._collect_video_settings()
+            get_tool_manager().require_tool("ffmpeg")
+            if not settings.input_frame_dir or not settings.input_frame_dir.exists():
+                raise ValueError("仅合成模式需要选择存在的输入帧目录。")
+            self._save_video_settings(settings)
+            return VideoMediaTask([settings.input_frame_dir or Path("frames")], settings)
         image_files = [path for path in actual_files if self._media_type(path) == "图片"]
         video_files = [path for path in actual_files if self._media_type(path) == "视频"]
         animated_files = [path for path in actual_files if self._media_type(path) == "动图"]
@@ -517,9 +583,13 @@ class SuperResolutionFeature(ToolFeature):
             settings = self._collect_video_settings()
             tool_manager = get_tool_manager()
             tool_manager.require_tool("ffmpeg")
-            tool_manager.require_tool("ffprobe")
+            if settings.workflow_mode != "encode_only":
+                tool_manager.require_tool("ffprobe")
             if settings.interpolation_enabled:
                 tool_manager.require_tool(settings.interpolation_engine)
+                resolve_interpolation_model_dir(settings.interpolation_engine, settings.interpolation_model)
+            if settings.upscale_enabled and settings.upscale_settings:
+                validate_super_resolution_inputs(video_files[:1], settings.upscale_settings)
             self._save_video_settings(settings)
             return VideoMediaTask(video_files, settings)
         if self.upscale_enabled_checkbox and not self.upscale_enabled_checkbox.isChecked():
@@ -531,6 +601,10 @@ class SuperResolutionFeature(ToolFeature):
 
     def _collect_video_settings(self) -> VideoProcessSettings:
         upscale_settings = self._collect_settings()
+        workflow_mode = self._video_workflow_mode()
+        needs_upscale = self._workflow_needs_upscale()
+        needs_interpolation = self._workflow_needs_interpolation()
+        input_frame_dir = Path(self.video_frame_dir_edit.text().strip()) if self.video_frame_dir_edit and self.video_frame_dir_edit.text().strip() else None
         frame_upscale_settings = SuperResolutionSettings(
             engine_id=upscale_settings.engine_id,
             output_dir=upscale_settings.output_dir,
@@ -549,17 +623,20 @@ class SuperResolutionFeature(ToolFeature):
             noise_level=upscale_settings.noise_level,
             syncgap_mode=upscale_settings.syncgap_mode,
         )
-        interpolation_enabled = self.interpolation_enabled_checkbox.isChecked() if self.interpolation_enabled_checkbox else False
-        upscale_enabled = self.upscale_enabled_checkbox.isChecked() if self.upscale_enabled_checkbox else True
-        if not upscale_enabled and not interpolation_enabled:
-            raise ValueError("请至少启用超分或插帧。")
+        if workflow_mode == "encode_only":
+            if input_frame_dir is None:
+                raise ValueError("仅合成模式需要选择输入帧目录。")
+            if self.video_fps_spin and self.video_fps_spin.value() <= 0:
+                raise ValueError("仅合成模式需要手动指定 FPS。")
         return VideoProcessSettings(
             output_dir=upscale_settings.output_dir,
             output_format="mp4",
+            workflow_mode=workflow_mode,
+            input_frame_dir=input_frame_dir,
             keep_audio=self.keep_audio_checkbox.isChecked() if self.keep_audio_checkbox else True,
             keep_temp=self.keep_temp_checkbox.isChecked() if self.keep_temp_checkbox else False,
-            upscale_enabled=upscale_enabled,
-            interpolation_enabled=interpolation_enabled,
+            upscale_enabled=needs_upscale,
+            interpolation_enabled=needs_interpolation,
             interpolation_engine=self.interpolation_engine_combo.currentData() if self.interpolation_engine_combo else "rife",
             interpolation_scale=self.interpolation_scale_combo.currentData() if self.interpolation_scale_combo else 2,
             interpolation_model=self.interpolation_model_combo.currentData() if self.interpolation_model_combo else "",
@@ -570,7 +647,7 @@ class SuperResolutionFeature(ToolFeature):
             crf=self.config.get("video_crf", 18, int),
             bitrate=self.config.get("video_bitrate", "", str),
             conflict_strategy=self.conflict_combo.currentData() if self.conflict_combo else "rename",
-            upscale_settings=frame_upscale_settings,
+            upscale_settings=frame_upscale_settings if needs_upscale else None,
         )
 
     def _collect_animated_settings(self) -> AnimatedProcessSettings:
@@ -648,6 +725,8 @@ class SuperResolutionFeature(ToolFeature):
     def _save_video_settings(self, settings: VideoProcessSettings) -> None:
         if settings.upscale_settings:
             self._save_settings(settings.upscale_settings)
+        self.config.set("video_workflow_mode", settings.workflow_mode)
+        self.config.set("video_input_frame_dir", str(settings.input_frame_dir or ""))
         self.config.set("upscale_enabled", settings.upscale_enabled)
         self.config.set("keep_audio", settings.keep_audio)
         self.config.set("keep_temp", settings.keep_temp)
@@ -819,6 +898,22 @@ class SuperResolutionFeature(ToolFeature):
         if not self.size_label or not self.output_info_label:
             return
         if not self._files:
+            if self._video_workflow_mode() == "encode_only" and self.video_frame_dir_edit and self.video_frame_dir_edit.text().strip():
+                frame_dir = Path(self.video_frame_dir_edit.text().strip())
+                frames = sorted(frame_dir.glob("*.png")) if frame_dir.exists() else []
+                fps = self.video_fps_spin.value() if self.video_fps_spin else 0
+                size_text = "未知"
+                if frames:
+                    try:
+                        width, height, _fmt = read_image_info(frames[0])
+                        size_text = f"{width} x {height}"
+                    except Exception:
+                        pass
+                self.size_label.setText(
+                    f"处理模式：仅合成\n输入帧目录：{frame_dir}\n帧数：{len(frames)}\n输出 FPS：{fps if fps > 0 else '需要手动指定'}\n分辨率：{size_text}"
+                )
+                self.output_info_label.setText("仅合成模式不会拆帧、超分或插帧；将直接把输入帧目录合成为视频。")
+                return
             self.size_label.setText("请添加图片、动图或视频文件。")
             self.output_info_label.setText("文件大小受内容、格式、倍率、质量和编码影响较大，仅供参考。")
             return
@@ -854,21 +949,30 @@ class SuperResolutionFeature(ToolFeature):
                     logger(f"动图读取失败：{selected.name}，原因：{exc}")
             return
         if media_type != "图片":
-            interpolation_enabled = self.interpolation_enabled_checkbox.isChecked() if self.interpolation_enabled_checkbox else False
+            workflow_mode = self._video_workflow_mode()
+            interpolation_enabled = self._workflow_needs_interpolation()
             interpolation_scale = self.interpolation_scale_combo.currentData() if self.interpolation_scale_combo else 2
-            upscale_enabled = self.upscale_enabled_checkbox.isChecked() if self.upscale_enabled_checkbox else True
-            mode_text = "超分 + 插帧" if upscale_enabled and interpolation_enabled else ("仅插帧" if interpolation_enabled else "仅超分")
+            upscale_enabled = self._workflow_needs_upscale()
+            mode_text = {
+                "upscale_only": "仅超分",
+                "interpolate_only": "仅插帧",
+                "upscale_then_interpolate": "先超分后插帧",
+                "interpolate_then_upscale": "先插帧后超分",
+                "extract_only": "仅拆帧",
+                "encode_only": "仅合成",
+            }.get(workflow_mode, workflow_mode)
             fps_text = "自动"
             if media_type == "视频":
                 try:
                     source_fps = media_fps(probe_media(selected))
                     selected_fps = self.video_fps_spin.value() if self.video_fps_spin else 0
-                    output_fps = selected_fps or source_fps * (interpolation_scale if interpolation_enabled else 1)
+                    auto_fps = source_fps * (interpolation_scale if interpolation_enabled else 1)
+                    output_fps = min(auto_fps, selected_fps) if selected_fps > 0 else auto_fps
                     fps_text = f"{source_fps:.3f} -> {output_fps:.3f}"
                 except Exception:
                     fps_text = "需要 ffprobe 才能预览"
             self.size_label.setText(
-                f"当前参考文件：{selected.name}\n类型：{media_type}\n处理模式：{mode_text}\n插帧倍率：{interpolation_scale}x\n输出 FPS：{fps_text}"
+                f"当前参考文件：{selected.name}\n类型：{media_type}\n处理模式：{mode_text}\n超分：{'启用' if upscale_enabled else '不启用'}\n插帧：{'启用' if interpolation_enabled else '不启用'}\n插帧倍率：{interpolation_scale}x\n输出 FPS：{fps_text}"
             )
             self.output_info_label.setText("视频输出大小受帧数、编码、插帧倍率、超分倍率和音频保留影响较大，仅供参考。")
             if self.interpolation_preview_label:

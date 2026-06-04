@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 
+from PIL import Image
 from PySide6.QtCore import QRunnable, Slot
 
 from image_toolbox.core.ffmpeg_tools import has_audio_stream, media_fps, probe_media, require_ffmpeg_tools
@@ -39,12 +40,22 @@ from image_toolbox.core.tool_manager import get_tool_manager
 FRAME_PATTERN = "%06d.png"
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
 VIDEO_CODECS = {"libx264", "libx265"}
+WORKFLOW_MODES = {
+    "upscale_only",
+    "interpolate_only",
+    "upscale_then_interpolate",
+    "interpolate_then_upscale",
+    "extract_only",
+    "encode_only",
+}
 
 
 @dataclass(frozen=True)
 class VideoProcessSettings:
     output_dir: Path
     output_format: str = "mp4"
+    workflow_mode: str = "upscale_then_interpolate"
+    input_frame_dir: Path | None = None
     keep_audio: bool = True
     keep_temp: bool = False
     upscale_enabled: bool = True
@@ -107,6 +118,14 @@ def _resolve_video_output_path(source: Path, settings: VideoProcessSettings) -> 
 
 def _frame_files(directory: Path) -> list[Path]:
     return sorted(path for path in directory.glob("*.png") if path.is_file())
+
+
+def _first_frame_size(directory: Path) -> tuple[int, int]:
+    frames = _frame_files(directory)
+    if not frames:
+        return 0, 0
+    with Image.open(frames[0]) as image:
+        return image.width, image.height
 
 
 def _parse_ffmpeg_frame(message: str) -> int | None:
@@ -210,6 +229,33 @@ class VideoMediaTask(QRunnable):
         self._active_task_dir: Path | None = None
         self._log_writer: TaskLogWriter | None = None
 
+    def _needs_upscale(self) -> bool:
+        return self.settings.workflow_mode in {"upscale_only", "upscale_then_interpolate", "interpolate_then_upscale"}
+
+    def _needs_interpolation(self) -> bool:
+        return self.settings.workflow_mode in {"interpolate_only", "upscale_then_interpolate", "interpolate_then_upscale"}
+
+    def _needs_extract(self) -> bool:
+        return self.settings.workflow_mode != "encode_only"
+
+    def _needs_encode(self) -> bool:
+        return self.settings.workflow_mode != "extract_only"
+
+    def _workflow_steps(self) -> list[str]:
+        steps = ["读取视频信息"]
+        if self.settings.workflow_mode == "encode_only":
+            return ["读取帧目录", "合成视频"]
+        steps.append("拆帧")
+        if self.settings.workflow_mode in {"upscale_only", "upscale_then_interpolate"}:
+            steps.append("超分")
+        if self.settings.workflow_mode in {"interpolate_only", "upscale_then_interpolate", "interpolate_then_upscale"}:
+            steps.append("插帧")
+        if self.settings.workflow_mode == "interpolate_then_upscale":
+            steps.append("超分")
+        if self.settings.workflow_mode != "extract_only":
+            steps.append("合成视频")
+        return steps
+
     def cancel(self) -> None:
         self._cancel_event.set()
         if self._command_runner:
@@ -281,6 +327,18 @@ class VideoMediaTask(QRunnable):
             return self._command_runner.run(command, self._cancel_event, self._debug, on_frame)
         finally:
             self._command_runner = None
+
+    def _copy_frames_to_final(self, frames_in: Path, frames_final: Path) -> Path:
+        if frames_in.resolve() == frames_final.resolve():
+            return frames_final
+        if frames_final.exists():
+            shutil.rmtree(frames_final, ignore_errors=True)
+        frames_final.mkdir(parents=True, exist_ok=True)
+        for frame in _frame_files(frames_in):
+            shutil.copy2(frame, frames_final / frame.name)
+        if not _frame_files(frames_final):
+            raise RuntimeError("最终帧目录为空，无法继续处理")
+        return frames_final
 
     def _extract_frames(self, ffmpeg: Path, source: Path, frame_dir: Path, file_index: int, total_files: int, total_frames: int) -> None:
         self._set_state("extracting", "extracting")
@@ -483,10 +541,18 @@ class VideoMediaTask(QRunnable):
         self._run_command(command, "合成视频", file_index, total_files, 80, 18, total_frames)
 
     def _process_video(self, source: Path, output_path: Path, task_dir: Path, file_index: int, total_files: int) -> None:
-        tools = require_ffmpeg_tools()
+        if self.settings.workflow_mode == "encode_only":
+            ffmpeg_path = get_tool_manager().require_tool("ffmpeg")
+            ffprobe_path: Path | None = None
+        else:
+            tools = require_ffmpeg_tools()
+            ffmpeg_path = tools.ffmpeg
+            ffprobe_path = tools.ffprobe
         if self._active_record:
             self._active_record.output_path = str(output_path)
-            self._active_record.tool_paths.update({"ffmpeg": str(tools.ffmpeg), "ffprobe": str(tools.ffprobe)})
+            self._active_record.tool_paths["ffmpeg"] = str(ffmpeg_path)
+            if ffprobe_path:
+                self._active_record.tool_paths["ffprobe"] = str(ffprobe_path)
             if self.settings.upscale_settings:
                 self._active_record.extra["upscale_engine"] = self.settings.upscale_settings.engine_id
                 self._active_record.extra["upscale_model"] = self.settings.upscale_settings.model_name
@@ -495,39 +561,76 @@ class VideoMediaTask(QRunnable):
                 self._active_record.extra["interpolation_engine"] = self.settings.interpolation_engine
                 self._active_record.extra["interpolation_model"] = self.settings.interpolation_model
             write_task_record(task_dir, self._active_record)
-        self._log(f"使用 FFmpeg：{tools.ffmpeg}")
-        self._log(f"使用 FFprobe：{tools.ffprobe}")
+        self._log(f"使用 FFmpeg：{ffmpeg_path}")
+        if ffprobe_path:
+            self._log(f"使用 FFprobe：{ffprobe_path}")
         self._log(f"输出目录：{self.settings.output_dir}")
         self._debug(f"临时目录：{task_dir}")
+        self._log(f"处理模式：{self.settings.workflow_mode}")
+        for step_index, step in enumerate(self._workflow_steps(), start=1):
+            self._log(f"阶段{step_index}：{step}")
         self._set_state("probing", "probing")
         self._emit_stage("读取视频", file_index, total_files, 5)
-        probe_data = probe_media(source, tools.ffprobe)
-        input_fps = media_fps(probe_data) or 30.0
-        total_frames = _probe_frame_count(probe_data)
-        output_fps = self.settings.output_fps or input_fps * (self.settings.interpolation_scale if self.settings.interpolation_enabled else 1)
-        source_has_audio = has_audio_stream(probe_data)
-        duration = float(probe_data.get("format", {}).get("duration") or 0)
-        width = 0
-        height = 0
-        for stream in probe_data.get("streams", []):
-            if stream.get("codec_type") == "video":
-                width = int(stream.get("width") or 0)
-                height = int(stream.get("height") or 0)
-                break
-        scale = self.settings.upscale_settings.scale if self.settings.upscale_enabled and self.settings.upscale_settings else 1
-        output_frames = max(1, total_frames or int(duration * input_fps) or 1) * (self.settings.interpolation_scale if self.settings.interpolation_enabled else 1)
+        if self.settings.workflow_mode == "encode_only":
+            if not self.settings.input_frame_dir:
+                raise ValueError("仅合成模式需要选择输入帧目录")
+            if self.settings.output_fps <= 0:
+                raise ValueError("仅合成模式需要手动指定 FPS")
+            input_fps = self.settings.output_fps
+            auto_output_fps = self.settings.output_fps
+            output_fps = self.settings.output_fps
+            total_frames = len(_frame_files(self.settings.input_frame_dir))
+            if total_frames <= 0:
+                raise ValueError(f"输入帧目录为空：{self.settings.input_frame_dir}")
+            source_has_audio = False
+            duration = total_frames / output_fps if output_fps else 0
+            width, height = _first_frame_size(self.settings.input_frame_dir)
+        else:
+            probe_data = probe_media(source, ffprobe_path)
+            input_fps = media_fps(probe_data) or 30.0
+            total_frames = _probe_frame_count(probe_data)
+            auto_output_fps = input_fps * (self.settings.interpolation_scale if self._needs_interpolation() else 1)
+            output_fps = min(auto_output_fps, self.settings.output_fps) if self.settings.output_fps > 0 else auto_output_fps
+            source_has_audio = has_audio_stream(probe_data)
+            duration = float(probe_data.get("format", {}).get("duration") or 0)
+            width = 0
+            height = 0
+            for stream in probe_data.get("streams", []):
+                if stream.get("codec_type") == "video":
+                    width = int(stream.get("width") or 0)
+                    height = int(stream.get("height") or 0)
+                    break
+        scale = self.settings.upscale_settings.scale if self._needs_upscale() and self.settings.upscale_settings else 1
+        output_frames = max(1, total_frames or int(duration * input_fps) or 1) * (self.settings.interpolation_scale if self._needs_interpolation() else 1)
+        output_width = width * scale if width else 0
+        output_height = height * scale if height else 0
         estimated_temp = estimate_frame_bytes(width, height, max(1, total_frames or output_frames), 1, 1.5)
-        if self.settings.upscale_enabled:
+        if self._needs_upscale():
             estimated_temp += estimate_frame_bytes(width, height, max(1, total_frames or output_frames), scale, 1.4)
-        if self.settings.interpolation_enabled:
+        if self._needs_interpolation():
             estimated_temp += estimate_frame_bytes(width, height, output_frames, scale, 1.3)
         if self._active_record:
             self._active_record.frame_count = total_frames
             self._active_record.estimated_output_frames = output_frames
             self._active_record.estimated_temp_bytes = estimated_temp
+            self._active_record.extra.update(
+                {
+                    "workflow_mode": self.settings.workflow_mode,
+                    "input_fps": input_fps,
+                    "output_fps": output_fps,
+                    "auto_output_fps": auto_output_fps,
+                    "input_size": [width, height],
+                    "output_size": [output_width, output_height],
+                    "input_frame_count": total_frames,
+                    "output_frame_count": output_frames,
+                    "workflow_steps": self._workflow_steps(),
+                }
+            )
             write_task_record(task_dir, self._active_record)
         ensure_space(task_dir, estimated_temp)
         self._log(f"视频信息：FPS {input_fps:.3f}，预估帧数 {total_frames or '未知'}，输出 FPS {output_fps:.3f}")
+        self._log(f"分辨率：{width}x{height} -> {output_width}x{output_height}")
+        self._log(f"预计输出帧数：{output_frames}")
         self._log(f"预计临时空间：{format_bytes(estimated_temp)}，仅供参考")
         if duration > 60 or total_frames > 3000 or output_frames > 6000 or estimated_temp > 10 * 1024**3:
             self._log("长任务警告：该任务可能耗时较长并占用大量磁盘空间，建议先使用短片测试。")
@@ -535,20 +638,46 @@ class VideoMediaTask(QRunnable):
         frames_raw = task_dir / "frames_raw"
         frames_upscaled = task_dir / "frames_upscaled"
         frames_interpolated = task_dir / "frames_interpolated"
+        frames_final = task_dir / "frames_final"
         audio_dir = task_dir / "audio"
 
-        self._extract_frames(tools.ffmpeg, source, frames_raw, file_index, total_files, total_frames)
+        audio_path: Path | None = None
+        if self.settings.workflow_mode == "encode_only":
+            frames_for_encode = self._copy_frames_to_final(self.settings.input_frame_dir, frames_final)
+            encode_frame_count = len(_frame_files(frames_for_encode))
+            self._encode_video(ffmpeg_path, frames_for_encode, output_path, output_fps, None, file_index, total_files, encode_frame_count)
+            self._emit_stage("完成", file_index, total_files, 100)
+            return
+
+        self._extract_frames(ffmpeg_path, source, frames_raw, file_index, total_files, total_frames)
         actual_frame_count = len(_frame_files(frames_raw))
-        audio_path = self._extract_audio(tools.ffmpeg, source, audio_dir, file_index, total_files, source_has_audio)
+        if self._needs_encode():
+            audio_path = self._extract_audio(ffmpeg_path, source, audio_dir, file_index, total_files, source_has_audio)
 
-        frames_for_encode = frames_raw
-        if self.settings.upscale_enabled:
-            frames_for_encode = self._upscale_frames(frames_raw, frames_upscaled, file_index, total_files)
-        if self.settings.interpolation_enabled:
-            frames_for_encode = self._interpolate_frames(frames_for_encode, frames_interpolated, file_index, total_files)
+        frames_current = frames_raw
+        if self.settings.workflow_mode in {"upscale_only", "upscale_then_interpolate"}:
+            frames_current = self._upscale_frames(frames_current, frames_upscaled, file_index, total_files)
+        if self.settings.workflow_mode in {"interpolate_only", "upscale_then_interpolate", "interpolate_then_upscale"}:
+            frames_current = self._interpolate_frames(frames_current, frames_interpolated, file_index, total_files)
+        if self.settings.workflow_mode == "interpolate_then_upscale":
+            frames_current = self._upscale_frames(frames_current, frames_upscaled, file_index, total_files)
 
+        if self.settings.workflow_mode == "extract_only":
+            self._log(f"仅拆帧完成，帧目录：{frames_raw}")
+            if self._active_record:
+                self._active_record.output_path = str(frames_raw)
+                self._active_record.extra["output_frame_dir"] = str(frames_raw)
+                write_task_record(task_dir, self._active_record)
+            self._emit_stage("完成", file_index, total_files, 100)
+            return
+
+        frames_for_encode = self._copy_frames_to_final(frames_current, frames_final)
         encode_frame_count = len(_frame_files(frames_for_encode)) or actual_frame_count
-        self._encode_video(tools.ffmpeg, frames_for_encode, output_path, output_fps, audio_path, file_index, total_files, encode_frame_count)
+        if self._active_record:
+            self._active_record.estimated_output_frames = encode_frame_count
+            self._active_record.extra["output_frame_count"] = encode_frame_count
+            write_task_record(task_dir, self._active_record)
+        self._encode_video(ffmpeg_path, frames_for_encode, output_path, output_fps, audio_path, file_index, total_files, encode_frame_count)
         self._emit_stage("完成", file_index, total_files, 100)
 
     @Slot()
@@ -571,7 +700,9 @@ class VideoMediaTask(QRunnable):
                     raise RuntimeError("用户取消")
                 if not source.exists():
                     raise FileNotFoundError(f"输入文件不存在：{source}")
-                if source.suffix.lower() not in VIDEO_EXTENSIONS:
+                if self.settings.workflow_mode == "encode_only" and not source.is_dir():
+                    raise ValueError(f"仅合成模式需要输入帧目录：{source}")
+                if self.settings.workflow_mode != "encode_only" and source.suffix.lower() not in VIDEO_EXTENSIONS:
                     raise ValueError(f"输入格式不支持：{source.suffix}")
                 output_path = _resolve_video_output_path(source, self.settings)
                 if output_path is None:
@@ -593,6 +724,8 @@ class VideoMediaTask(QRunnable):
                     status="waiting",
                     stage="waiting",
                     extra={
+                        "workflow_mode": self.settings.workflow_mode,
+                        "workflow_steps": self._workflow_steps(),
                         "upscale_enabled": self.settings.upscale_enabled,
                         "interpolation_enabled": self.settings.interpolation_enabled,
                         "keep_audio": self.settings.keep_audio,
