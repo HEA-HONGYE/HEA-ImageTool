@@ -257,6 +257,8 @@ class SettingsDialog(QDialog):
         self.setMinimumSize(920, 620)
         self.resize(1180, 760)
         self.nav_buttons: dict[str, QPushButton] = {}
+        self.page_factories = {}
+        self.page_widgets: dict[str, QWidget] = {}
         self._centered_once = False
 
         root = QHBoxLayout(self)
@@ -279,11 +281,11 @@ class SettingsDialog(QDialog):
 
         self.stack = StableStackedWidget()
         self.page_keys: list[str] = []
-        self._add_settings_page("engine_base", EngineSettingsPanel("base"))
-        self._add_settings_page("engine_image", EngineSettingsPanel("image"))
-        self._add_settings_page("engine_video", EngineSettingsPanel("video"))
-        self._add_settings_page("tool_settings", SettingsContentPage(ToolSettingsPanel()))
-        self._add_settings_page("personalization", SettingsContentPage(PersonalizationPanel(self.personalization_callback)))
+        self._add_settings_page("engine_base", lambda: EngineSettingsPanel("base"))
+        self._add_settings_page("engine_image", lambda: EngineSettingsPanel("image"))
+        self._add_settings_page("engine_video", lambda: EngineSettingsPanel("video"))
+        self._add_settings_page("tool_settings", lambda: SettingsContentPage(ToolSettingsPanel()))
+        self._add_settings_page("personalization", lambda: SettingsContentPage(PersonalizationPanel(self.personalization_callback)))
 
         self._add_nav_group_label(side_layout, "引擎设置")
         self._add_settings_nav(side_layout, "engine_base", "基础配置")
@@ -306,9 +308,12 @@ class SettingsDialog(QDialog):
         root.addWidget(self.stack, 1)
         self.switch_page("engine_base")
 
-    def _add_settings_page(self, key: str, page: QWidget) -> None:
+    def _add_settings_page(self, key: str, page_factory) -> None:
         self.page_keys.append(key)
-        self.stack.addWidget(page)
+        placeholder = QWidget()
+        self.page_factories[key] = page_factory
+        self.page_widgets[key] = placeholder
+        self.stack.addWidget(placeholder)
 
     def _add_nav_group_label(self, layout: QVBoxLayout, text: str) -> None:
         label = QLabel(text)
@@ -327,7 +332,15 @@ class SettingsDialog(QDialog):
     def switch_page(self, page_key: str) -> None:
         if page_key not in self.page_keys:
             return
-        self.stack.setCurrentIndex(self.page_keys.index(page_key))
+        index = self.page_keys.index(page_key)
+        if page_key in self.page_factories:
+            placeholder = self.page_widgets[page_key]
+            page = self.page_factories.pop(page_key)()
+            self.page_widgets[page_key] = page
+            self.stack.removeWidget(placeholder)
+            placeholder.deleteLater()
+            self.stack.insertWidget(index, page)
+        self.stack.setCurrentIndex(index)
         for button_key, button in self.nav_buttons.items():
             button.setChecked(button_key == page_key)
 
@@ -386,6 +399,7 @@ class MainWindow(QMainWindow):
         self.run_button: QPushButton | None = None
         self.pause_button: QPushButton | None = None
         self.cancel_button: QPushButton | None = None
+        self.open_output_button: QPushButton | None = None
         self.retry_failed_button: QPushButton | None = None
         self.current_progress_label: QLabel | None = None
         self.status_label: QLabel | None = None
@@ -406,6 +420,7 @@ class MainWindow(QMainWindow):
         self.current_task: ImageBatchTask | None = None
         self.last_failed_files: list[Path] = []
         self.last_failed_feature_key: str | None = None
+        self.log_messages: list[str] = []
 
         self.shell = AppShell()
         self.setCentralWidget(self.shell)
@@ -439,6 +454,8 @@ class MainWindow(QMainWindow):
         self.file_panel.files_changed.connect(self._notify_file_context_changed)
         self.file_panel.selection_changed.connect(self._notify_file_context_changed)
         content.addWidget(self.file_panel)
+        if hasattr(self.features.get("super_resolution"), "bind_file_panel"):
+            self.features["super_resolution"].bind_file_panel(self.file_panel)
 
         self.bottom_panel = self._build_bottom_panel()
         self.shell.body_layout.addWidget(self.bottom_panel)
@@ -503,9 +520,13 @@ class MainWindow(QMainWindow):
         self.cancel_button = QPushButton("停止")
         self.cancel_button.setObjectName("GhostButton")
         self.cancel_button.clicked.connect(self.cancel_task)
+        self.open_output_button = QPushButton("打开输出目录")
+        self.open_output_button.setObjectName("GhostButton")
+        self.open_output_button.clicked.connect(self.open_output_dir)
         layout.addWidget(self.run_button)
         layout.addWidget(self.pause_button)
         layout.addWidget(self.cancel_button)
+        layout.addWidget(self.open_output_button)
         self._set_action_buttons_visible(False)
         return sidebar
 
@@ -533,7 +554,7 @@ class MainWindow(QMainWindow):
         window_geometry = self.geometry()
         window_state = self.windowState()
         self.setUpdatesEnabled(False)
-        processing_pages = {"compress", "convert", "resize", "watermark", "rename"}
+        processing_pages = {"compress", "convert", "resize", "watermark", "rename", "super_resolution"}
         is_processing_page = key in processing_pages
         runnable_pages = set(self.features)
         try:
@@ -545,6 +566,7 @@ class MainWindow(QMainWindow):
             if key == "super_resolution" and hasattr(self.features.get("super_resolution"), "refresh_from_engine_settings"):
                 self.features["super_resolution"].refresh_from_engine_settings()
             if hasattr(self, "file_panel"):
+                self.file_panel.configure_media_mode(key == "super_resolution")
                 self.file_panel.setVisible(is_processing_page)
             if self.bottom_panel:
                 self.bottom_panel.setVisible(is_processing_page)
@@ -574,6 +596,8 @@ class MainWindow(QMainWindow):
         self._set_progress(0)
         if hasattr(feature, "reset_statuses"):
             feature.reset_statuses()
+            if key == "super_resolution":
+                self.file_panel.reset_statuses()
         else:
             self.file_panel.reset_statuses()
         try:
@@ -599,7 +623,10 @@ class MainWindow(QMainWindow):
             task.signals.current_progress.connect(self._set_current_progress)
             if hasattr(feature, "set_current_progress"):
                 task.signals.current_progress.connect(feature.set_current_progress)
-        if hasattr(feature, "set_file_status"):
+        if key == "super_resolution" and hasattr(feature, "set_file_status"):
+            task.signals.file_status.connect(feature.set_file_status)
+            task.signals.file_status.connect(self.file_panel.set_file_status)
+        elif hasattr(feature, "set_file_status"):
             task.signals.file_status.connect(feature.set_file_status)
         else:
             task.signals.file_status.connect(self.file_panel.set_file_status)
@@ -715,19 +742,21 @@ class MainWindow(QMainWindow):
             self.toolbar_compact_status.setText("状态：处理中" if is_running else "状态：就绪")
 
     def _set_action_buttons_visible(self, visible: bool) -> None:
-        for button in [self.run_button, self.pause_button, self.cancel_button]:
+        for button in [self.run_button, self.pause_button, self.cancel_button, self.open_output_button]:
             if button:
                 button.setVisible(visible)
 
     def _log(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_box.append(f"[{timestamp}] {message}")
+        line = f"[{timestamp}] {message}"
+        self.log_messages.append(line)
+        self.log_messages = self.log_messages[-2000:]
         if self.log_dialog_box:
-            self.log_dialog_box.append(f"[{timestamp}] {message}")
+            self.log_dialog_box.append(line)
         key = self.page_keys[self.stack.currentIndex()] if hasattr(self, "stack") and self.page_keys else ""
         feature = self.features.get(key)
         if feature and hasattr(feature, "append_log"):
-            feature.append_log(f"[{timestamp}] {message}")
+            feature.append_log(line)
 
     def _log_debug(self, message: str) -> None:
         self._log(message)
@@ -792,7 +821,15 @@ class MainWindow(QMainWindow):
         if self.progress_percent_label:
             self.progress_percent_label.setText(f"{clamped_value}%")
 
+    def _reset_bottom_status(self) -> None:
+        self._set_progress(0)
+        if self.status_label:
+            self.status_label.setText("状态：就绪")
+        if self.current_progress_label:
+            self.current_progress_label.setText("当前：未开始")
+
     def _clear_log(self) -> None:
+        self.log_messages.clear()
         self.log_box.clear()
         if self.log_dialog_box:
             self.log_dialog_box.clear()
@@ -813,7 +850,7 @@ class MainWindow(QMainWindow):
 
         self.log_dialog_box = QTextEdit(dialog)
         self.log_dialog_box.setReadOnly(True)
-        self.log_dialog_box.setPlainText(self.log_box.toPlainText())
+        self.log_dialog_box.setPlainText("\n".join(self.log_messages))
         layout.addWidget(self.log_dialog_box)
 
         buttons = QHBoxLayout()
@@ -1018,7 +1055,13 @@ class MainWindow(QMainWindow):
 
     def _notify_file_context_changed(self) -> None:
         key = self.page_keys[self.stack.currentIndex()] if hasattr(self, "stack") and self.page_keys else ""
+        if hasattr(self, "file_panel") and not self.file_panel.files and key in self.features and not self.is_running:
+            self._reset_bottom_status()
         if key in self.features:
+            if key == "super_resolution":
+                selected_file = self.file_panel.selected_file() if hasattr(self, "file_panel") else None
+                self.features[key].update_file_context(list(self.file_panel.files), selected_file, self._log)
+                return
             if hasattr(self.features[key], "get_workbench_files"):
                 self.features[key].update_file_context([], None, self._log)
                 return

@@ -213,8 +213,8 @@ QPushButton#LiquidPillButton[variant="soft"] {{
 }}
 
 QPushButton#NavButton {{
-    background: transparent;
-    border: 0;
+    background: rgba(255, 255, 255, 92);
+    border: 1px solid rgba(255, 255, 255, 88);
     color: #000000;
     text-align: left;
     padding: 0 16px;
@@ -226,18 +226,21 @@ QPushButton#NavButton {{
 }}
 
 QPushButton#NavButton:hover {{
-    background: rgba(255, 255, 255, 175);
+    background: rgba(232, 242, 255, 210);
+    border-color: rgba(47, 125, 246, 70);
+    color: #0F3575;
 }}
 
 QPushButton#NavButton:checked {{
-    background: rgba(47, 125, 246, 210);
-    color: white;
+    background: rgba(47, 125, 246, 225);
+    border-color: rgba(47, 125, 246, 120);
+    color: #000000;
 }}
 
 QFrame#FeatureCard,
 QGroupBox {{
     background: #FFFFFF;
-    border: 1px solid {TOKENS.border_soft};
+    border: 1px solid rgba(84, 101, 130, 78);
     border-radius: {TOKENS.radius_card}px;
     color: {TOKENS.text};
 }}
@@ -264,6 +267,46 @@ QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QListWidget {{
     selection-background-color: #CCE0FF;
 }}
 
+QComboBox {{
+    padding-right: 34px;
+}}
+
+QComboBox:hover {{
+    background: #F8FAFD;
+    border-color: rgba(47, 125, 246, 90);
+}}
+
+QComboBox::drop-down {{
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 30px;
+    border-left: 1px solid rgba(118, 134, 159, 38);
+    border-top-right-radius: {TOKENS.radius_input}px;
+    border-bottom-right-radius: {TOKENS.radius_input}px;
+    background: rgba(248, 250, 253, 210);
+}}
+
+QComboBox::drop-down:hover {{
+    background: #E8F2FF;
+    border-left-color: rgba(47, 125, 246, 80);
+}}
+
+QComboBox::down-arrow {{
+    image: url("assets/icons/chevron-down.svg");
+    width: 14px;
+    height: 14px;
+}}
+
+QComboBox::down-arrow:hover {{
+    image: url("assets/icons/chevron-down-hover.svg");
+}}
+
+QLabel#DimensionSeparator {{
+    color: #000000;
+    font-size: 20px;
+    font-weight: 760;
+}}
+
 QTextEdit {{
     font-family: "Cascadia Mono", "Consolas", "Microsoft YaHei UI";
     color: #283548;
@@ -271,6 +314,68 @@ QTextEdit {{
 
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
     min-height: 26px;
+}}
+
+QSpinBox, QDoubleSpinBox {{
+    padding-right: 38px;
+}}
+
+QSpinBox::up-button,
+QDoubleSpinBox::up-button {{
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 32px;
+    margin: 0px;
+    border-left: 1px solid rgba(118, 134, 159, 48);
+    border-bottom: 1px solid rgba(118, 134, 159, 28);
+    border-top-right-radius: {TOKENS.radius_input}px;
+    border-bottom-right-radius: 0px;
+    background: rgba(248, 250, 253, 210);
+}}
+
+QSpinBox::down-button,
+QDoubleSpinBox::down-button {{
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 32px;
+    margin: 0px;
+    border-left: 1px solid rgba(118, 134, 159, 48);
+    border-top: 0;
+    border-top-right-radius: 0px;
+    border-bottom-right-radius: {TOKENS.radius_input}px;
+    background: rgba(248, 250, 253, 210);
+}}
+
+QSpinBox::up-button:hover,
+QSpinBox::down-button:hover,
+QDoubleSpinBox::up-button:hover,
+QDoubleSpinBox::down-button:hover {{
+    background: #E8F2FF;
+    border-left-color: rgba(47, 125, 246, 80);
+}}
+
+QSpinBox::up-arrow,
+QDoubleSpinBox::up-arrow {{
+    image: url("assets/icons/chevron-up.svg");
+    width: 12px;
+    height: 12px;
+}}
+
+QSpinBox::up-arrow:hover,
+QDoubleSpinBox::up-arrow:hover {{
+    image: url("assets/icons/chevron-up-hover.svg");
+}}
+
+QSpinBox::down-arrow,
+QDoubleSpinBox::down-arrow {{
+    image: url("assets/icons/chevron-down-small.svg");
+    width: 12px;
+    height: 12px;
+}}
+
+QSpinBox::down-arrow:hover,
+QDoubleSpinBox::down-arrow:hover {{
+    image: url("assets/icons/chevron-down-small-hover.svg");
 }}
 
 QComboBox QAbstractItemView {{

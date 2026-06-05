@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractSpinBox, QCheckBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QVBoxLayout, QWidget
 
 from image_toolbox.core.config import AppConfig
 from image_toolbox.core.image_ops import resize_image
@@ -63,13 +63,23 @@ class ResizeFeature(ToolFeature):
         self.width_spin = QSpinBox()
         self.width_spin.setRange(1, 20000)
         self.width_spin.setValue(self.config.get("width", 1280, int))
+        self.width_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.width_spin.setFixedWidth(320)
         self.height_spin = QSpinBox()
         self.height_spin.setRange(1, 20000)
         self.height_spin.setValue(self.config.get("height", 720, int))
+        self.height_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.height_spin.setFixedWidth(320)
+        separator = QLabel("x")
+        separator.setObjectName("DimensionSeparator")
+        separator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        separator.setFixedWidth(28)
         size_row = QHBoxLayout()
+        size_row.setSpacing(12)
         size_row.addWidget(self.width_spin)
-        size_row.addWidget(QLabel("x"))
+        size_row.addWidget(separator)
         size_row.addWidget(self.height_spin)
+        size_row.addStretch(1)
         form.addRow("宽高", size_row)
 
         self.keep_aspect_checkbox = QCheckBox("保持原比例")

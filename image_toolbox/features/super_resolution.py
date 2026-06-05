@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -152,9 +153,13 @@ class SuperResolutionFeature(ToolFeature):
         self.recent_log_box: QPlainTextEdit | None = None
         self.page_progress_bar: QProgressBar | None = None
         self.page_status_label: QLabel | None = None
+        self.page_progress_percent_label: QLabel | None = None
+        self.page_current_label: QLabel | None = None
         self.output_form: QFormLayout | None = None
         self.workflow_form: QFormLayout | None = None
         self.video_frame_dir_row: QWidget | None = None
+        self.external_file_panel = None
+        self._syncing_external_file_panel = False
         self._files: list[Path] = []
         self._statuses: list[str] = []
         self._selected_file: Path | None = None
@@ -163,21 +168,26 @@ class SuperResolutionFeature(ToolFeature):
     def build_panel(self) -> QWidget:
         panel = QWidget()
         panel.setObjectName("SuperResolutionWorkbench")
-        root = QHBoxLayout(panel)
-        root.setContentsMargins(18, 18, 18, 18)
+        root = QVBoxLayout(panel)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(16)
+
+        workbench_row = QHBoxLayout()
+        workbench_row.setContentsMargins(0, 0, 0, 0)
+        workbench_row.setSpacing(16)
+        root.addLayout(workbench_row, 1)
 
         main = QFrame()
         main.setObjectName("SuperMainColumn")
         main_layout = QVBoxLayout(main)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setContentsMargins(18, 18, 0, 0)
         main_layout.setSpacing(12)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setWidget(main)
-        root.addWidget(scroll, 1)
+        workbench_row.addWidget(scroll, 1)
 
         header = QHBoxLayout()
         header.setSpacing(16)
@@ -210,24 +220,21 @@ class SuperResolutionFeature(ToolFeature):
         main_layout.addLayout(header)
 
         main_layout.addWidget(self._build_mode_bar())
-        main_layout.addWidget(self._build_file_area(), 5)
-        main_layout.addLayout(self._build_toolbar())
 
         cards = QGridLayout()
         cards.setContentsMargins(0, 0, 0, 0)
-        cards.setHorizontalSpacing(12)
-        cards.setVerticalSpacing(12)
-        cards.addWidget(self._build_upscale_group(), 0, 0)
-        cards.addWidget(self._build_interpolation_group(), 0, 1)
-        cards.addWidget(self._build_output_group(), 0, 2)
+        cards.setHorizontalSpacing(16)
+        cards.setVerticalSpacing(16)
+        cards.setAlignment(Qt.AlignmentFlag.AlignTop)
+        cards.addWidget(self._build_upscale_group(), 0, 0, alignment=Qt.AlignmentFlag.AlignTop)
+        cards.addWidget(self._build_output_group(), 0, 1, alignment=Qt.AlignmentFlag.AlignTop)
+        cards.addWidget(self._build_interpolation_group(), 1, 0, 1, 2, alignment=Qt.AlignmentFlag.AlignTop)
         cards.setColumnStretch(0, 1)
         cards.setColumnStretch(1, 1)
-        cards.setColumnStretch(2, 1)
+        cards.setRowStretch(0, 0)
+        cards.setRowStretch(1, 0)
         main_layout.addLayout(cards)
-
-        main_layout.addWidget(self._build_preview_group())
-        main_layout.addWidget(self._build_page_status_bar())
-        root.addWidget(self._build_task_center())
+        main_layout.addStretch(1)
 
         self._configure_video_groups()
         self.refresh_from_engine_settings()
@@ -238,6 +245,7 @@ class SuperResolutionFeature(ToolFeature):
     def _glass_card(self, title: str, object_name: str = "SuperGlassCard") -> QFrame:
         card = QFrame()
         card.setObjectName(object_name)
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(10)
@@ -249,6 +257,7 @@ class SuperResolutionFeature(ToolFeature):
     def _build_mode_bar(self) -> QWidget:
         bar = QFrame()
         bar.setObjectName("SuperModeBar")
+        bar.setFixedHeight(48)
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(16, 10, 16, 10)
         layout.setSpacing(16)
@@ -273,7 +282,7 @@ class SuperResolutionFeature(ToolFeature):
         drop = QLabel("拖拽文件或文件夹到这里，或点击下方按钮添加\n支持图片（JPG/PNG/WebP）、动图（GIF/APNG/WebP）和视频（MP4/MKV 等）")
         drop.setObjectName("SuperDropZone")
         drop.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        drop.setMinimumHeight(74)
+        drop.setMinimumHeight(60)
         layout.addWidget(drop)
 
         self.file_table = QTableWidget(0, 6)
@@ -289,7 +298,7 @@ class SuperResolutionFeature(ToolFeature):
         self.file_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.file_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.file_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
-        self.file_table.setMinimumHeight(320)
+        self.file_table.setFixedHeight(220)
         layout.addWidget(self.file_table)
         return group
 
@@ -399,6 +408,11 @@ class SuperResolutionFeature(ToolFeature):
         group = self._glass_card("输出设置")
         self.output_group = group
         form = QFormLayout()
+        form.setContentsMargins(0, 6, 0, 0)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(12)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.output_form = form
         group.layout().addLayout(form)
         self.output_edit = QLineEdit(self.config.get("output_dir", str(Path.cwd() / "output")))
@@ -445,7 +459,23 @@ class SuperResolutionFeature(ToolFeature):
         self.conflict_combo.addItem("跳过", "skip")
         self.conflict_combo.addItem("覆盖", "overwrite")
         self.conflict_combo.setCurrentIndex(max(0, self.conflict_combo.findData(self.config.get("conflict_strategy", "rename"))))
+        self.video_workflow_combo = QComboBox()
+        for workflow_key, workflow_label in VIDEO_WORKFLOW_LABELS.items():
+            self.video_workflow_combo.addItem(workflow_label, workflow_key)
+        self.video_workflow_combo.setCurrentIndex(max(0, self.video_workflow_combo.findData(self.config.get("video_workflow_mode", "upscale_then_interpolate", str))))
+        self.video_workflow_combo.currentIndexChanged.connect(self._on_video_workflow_changed)
+        self.video_frame_dir_edit = QLineEdit(self.config.get("video_input_frame_dir", "", str))
+        frame_dir_button = QPushButton("选择帧目录")
+        frame_dir_button.setObjectName("GhostButton")
+        frame_dir_button.clicked.connect(self._choose_video_frame_dir)
+        self.video_frame_dir_row = QWidget()
+        frame_dir_row = QHBoxLayout(self.video_frame_dir_row)
+        frame_dir_row.setContentsMargins(0, 0, 0, 0)
+        frame_dir_row.addWidget(self.video_frame_dir_edit)
+        frame_dir_row.addWidget(frame_dir_button)
         form.addRow("覆盖策略", self.conflict_combo)
+        form.addRow("视频流程", self.video_workflow_combo)
+        form.addRow("仅合成帧目录", self.video_frame_dir_row)
         self.keep_audio_checkbox = QCheckBox("保留音频")
         self.keep_audio_checkbox.setChecked(self.config.get("keep_audio", True, bool))
         form.addRow("音频", self.keep_audio_checkbox)
@@ -465,6 +495,11 @@ class SuperResolutionFeature(ToolFeature):
         group = self._glass_card("超分设置")
         self.upscale_group = group
         form = QFormLayout()
+        form.setContentsMargins(0, 6, 0, 0)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(12)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         group.layout().addLayout(form)
         self.upscale_enabled_checkbox = QCheckBox("启用超分 / 图片增强")
         self.upscale_enabled_checkbox.setChecked(self.config.get("upscale_enabled", True, bool))
@@ -519,6 +554,11 @@ class SuperResolutionFeature(ToolFeature):
         group = self._glass_card("插帧设置")
         self.interpolation_group = group
         form = QFormLayout()
+        form.setContentsMargins(0, 6, 0, 0)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(12)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         group.layout().addLayout(form)
         self.interpolation_enabled_checkbox = QCheckBox("启用插帧")
         self.interpolation_enabled_checkbox.setChecked(self.config.get("interpolation_enabled", False, bool))
@@ -831,13 +871,13 @@ class SuperResolutionFeature(ToolFeature):
 
     def _build_task_center(self) -> QWidget:
         center = QFrame()
-        center.setObjectName("SuperTaskCenter")
-        center.setFixedWidth(330)
+        center.setObjectName("RightPanel")
+        center.setFixedWidth(350)
         layout = QVBoxLayout(center)
-        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        title = QLabel("任务中心")
+        title = QLabel("任务队列")
         title.setObjectName("CardTitle")
         layout.addWidget(title)
 
@@ -860,25 +900,16 @@ class SuperResolutionFeature(ToolFeature):
         empty.setMinimumHeight(150)
         layout.addWidget(empty)
 
-        log_title = QLabel("实时日志")
-        log_title.setObjectName("CardTitle")
-        layout.addWidget(log_title)
-        self.recent_log_box = QPlainTextEdit()
-        self.recent_log_box.setObjectName("SuperRecentLog")
-        self.recent_log_box.setReadOnly(True)
-        self.recent_log_box.setMaximumBlockCount(80)
-        layout.addWidget(self.recent_log_box, 1)
+        layout.addStretch(1)
 
         actions = QVBoxLayout()
-        expand_button = QPushButton("展开日志")
         open_log_button = QPushButton("打开日志目录")
         retry_button = QPushButton("重试失败任务")
-        for button in [expand_button, open_log_button, retry_button]:
+        for button in [open_log_button, retry_button]:
             button.setObjectName("GhostButton")
             actions.addWidget(button)
         open_log_button.clicked.connect(self._open_log_dir_from_page)
         retry_button.setEnabled(False)
-        expand_button.clicked.connect(lambda: self.recent_log_box.setMaximumHeight(420) if self.recent_log_box else None)
         layout.addLayout(actions)
         return center
 
@@ -890,21 +921,50 @@ class SuperResolutionFeature(ToolFeature):
 
     def _build_page_status_bar(self) -> QWidget:
         bar = QFrame()
-        bar.setObjectName("SuperStatusBar")
+        bar.setObjectName("GlassStatusBar")
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(12, 4, 12, 4)
+        layout.setContentsMargins(16, 6, 16, 6)
         layout.setSpacing(12)
         self.page_status_label = QLabel("就绪｜0%｜无当前任务｜剩余 --:--｜临时空间估算中")
-        self.page_status_label.setObjectName("MutedText")
+        self.page_status_label.setObjectName("BottomStatusText")
+        self.page_status_label.setText("状态：就绪")
         self.page_progress_bar = QProgressBar()
         self.page_progress_bar.setRange(0, 100)
         self.page_progress_bar.setValue(0)
         self.page_progress_bar.setTextVisible(False)
-        self.page_progress_bar.setFixedHeight(8)
-        layout.addWidget(self.page_status_label, 1)
-        layout.addWidget(self.page_progress_bar, 1)
-        bar.setFixedHeight(32)
+        self.page_progress_bar.setFixedWidth(180)
+        self.page_progress_bar.setFixedHeight(16)
+        layout.addWidget(self.page_status_label)
+        layout.addWidget(self.page_progress_bar)
+        self.page_progress_percent_label = QLabel("0%")
+        self.page_progress_percent_label.setObjectName("BottomStatusText")
+        self.page_progress_percent_label.setFixedWidth(42)
+        layout.addWidget(self.page_progress_percent_label)
+        self.page_current_label = QLabel("当前：未开始")
+        self.page_current_label.setObjectName("BottomStatusText")
+        layout.addWidget(self.page_current_label, 1)
+        settings_button = QPushButton("设置")
+        settings_button.setObjectName("BottomActionButton")
+        settings_button.setFixedSize(78, 34)
+        settings_button.clicked.connect(self._show_settings_from_page)
+        layout.addWidget(settings_button)
+        log_button = QPushButton("查看日志")
+        log_button.setObjectName("BottomActionButton")
+        log_button.setFixedSize(96, 34)
+        log_button.clicked.connect(self._show_log_dialog_from_page)
+        layout.addWidget(log_button)
+        bar.setFixedHeight(48)
         return bar
+
+    def _show_settings_from_page(self) -> None:
+        window = self.window()
+        if hasattr(window, "show_settings_dialog"):
+            window.show_settings_dialog()
+
+    def _show_log_dialog_from_page(self) -> None:
+        window = self.window()
+        if hasattr(window, "show_log_dialog"):
+            window.show_log_dialog()
 
     def _toggle_advanced(self, panel: QWidget | None, button: QPushButton) -> None:
         if not panel:
@@ -940,9 +1000,9 @@ class SuperResolutionFeature(ToolFeature):
         if self.video_fps_spin:
             self._set_form_field_visible(self.output_form, self.video_fps_spin, mode == "video")
         if self.video_workflow_combo:
-            self._set_form_field_visible(self.workflow_form, self.video_workflow_combo, mode == "video")
+            self._set_form_field_visible(self.output_form, self.video_workflow_combo, mode == "video")
         if self.video_frame_dir_row:
-            self._set_form_field_visible(self.workflow_form, self.video_frame_dir_row, mode == "video")
+            self._set_form_field_visible(self.output_form, self.video_frame_dir_row, mode == "video")
         self._refresh_preview()
 
     def _set_form_field_visible(self, form: QFormLayout | None, field: QWidget | None, visible: bool) -> None:
@@ -955,24 +1015,35 @@ class SuperResolutionFeature(ToolFeature):
                 label.setVisible(visible)
 
     def append_log(self, message: str) -> None:
-        self._recent_logs.append(message)
-        self._recent_logs = self._recent_logs[-80:]
-        if self.recent_log_box:
-            self.recent_log_box.setPlainText("\n".join(self._recent_logs[-12:]))
-            self.recent_log_box.verticalScrollBar().setValue(self.recent_log_box.verticalScrollBar().maximum())
+        return
 
     def set_page_progress(self, value: int) -> None:
+        value = max(0, min(100, int(value)))
         if self.page_progress_bar:
             self.page_progress_bar.setValue(value)
+        if self.page_progress_percent_label:
+            self.page_progress_percent_label.setText(f"{value}%")
         if self.page_status_label:
             selected = self._selected_file.name if self._selected_file else "无当前任务"
             state = "处理中" if value and value < 100 else ("完成" if value >= 100 else "就绪")
             self.page_status_label.setText(f"{state}｜{value}%｜{selected}｜剩余 --:--｜临时空间估算中")
 
+        if self.page_status_label:
+            state = "处理中" if value and value < 100 else ("完成" if value >= 100 else "就绪")
+            self.page_status_label.setText(f"状态：{state}")
+        if self.page_current_label:
+            selected = self._selected_file.name if self._selected_file else "未开始"
+            self.page_current_label.setText(f"当前：{selected}")
+
     def set_current_progress(self, message: str) -> None:
         if self.page_status_label:
             value = self.page_progress_bar.value() if self.page_progress_bar else 0
             self.page_status_label.setText(f"处理中｜{value}%｜{message}｜剩余 --:--｜临时空间估算中")
+
+        if self.page_status_label:
+            self.page_status_label.setText("状态：处理中")
+        if self.page_current_label:
+            self.page_current_label.setText(message)
 
     def choose_files(self) -> None:
         selected, _ = QFileDialog.getOpenFileNames(
@@ -982,6 +1053,20 @@ class SuperResolutionFeature(ToolFeature):
             "Media Files (*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff *.gif *.apng *.mp4 *.mov *.mkv *.avi *.webm *.m4v)",
         )
         self.add_files([Path(item) for item in selected])
+
+    def bind_file_panel(self, file_panel) -> None:
+        self.external_file_panel = file_panel
+        self._sync_external_file_panel()
+
+    def _sync_external_file_panel(self) -> None:
+        if not self.external_file_panel or self._syncing_external_file_panel:
+            return
+        self._syncing_external_file_panel = True
+        try:
+            if hasattr(self.external_file_panel, "set_files"):
+                self.external_file_panel.set_files(self._files, self._statuses)
+        finally:
+            self._syncing_external_file_panel = False
 
     def _choose_folder(self) -> None:
         directory = QFileDialog.getExistingDirectory(None, "选择媒体文件夹", str(Path.cwd()))
@@ -1002,12 +1087,17 @@ class SuperResolutionFeature(ToolFeature):
             self._statuses.append("待处理")
             existing.add(path.resolve())
         self._refresh_file_table()
+        self._sync_external_file_panel()
 
     def clear_files(self) -> None:
         self._files.clear()
         self._statuses.clear()
         self._selected_file = None
         self._refresh_file_table()
+        self._sync_external_file_panel()
+        window = self.window()
+        if hasattr(window, "_reset_bottom_status"):
+            window._reset_bottom_status()
 
     def remove_selected_file(self) -> None:
         if not self.file_table:
@@ -1019,6 +1109,7 @@ class SuperResolutionFeature(ToolFeature):
         del self._statuses[row]
         self._selected_file = self._files[0] if self._files else None
         self._refresh_file_table()
+        self._sync_external_file_panel()
 
     def get_workbench_files(self) -> list[Path]:
         return list(self._files)
@@ -1031,9 +1122,15 @@ class SuperResolutionFeature(ToolFeature):
         if 0 <= index < len(self._statuses):
             self._statuses[index] = status
             self._refresh_file_table(keep_selection=True)
+            self._sync_external_file_panel()
 
     def _refresh_file_table(self, keep_selection: bool = False) -> None:
         if not self.file_table:
+            self._selected_file = self._files[0] if self._files else None
+            if self.file_count_label:
+                self.file_count_label.setText(f"文件数量：{len(self._files)}")
+            self._refresh_task_center_stats()
+            self._update_preview()
             return
         current = self.file_table.currentRow() if keep_selection else 0
         self.file_table.setRowCount(0)
@@ -1056,7 +1153,7 @@ class SuperResolutionFeature(ToolFeature):
 
     def _refresh_task_center_stats(self) -> None:
         waiting = sum(1 for status in self._statuses if "待" in status or "等待" in status)
-        running = sum(1 for status in self._statuses if "处理" in status or "运行" in status)
+        running = sum(1 for status in self._statuses if ("处理中" in status or "运行中" in status) and "待" not in status)
         done = sum(1 for status in self._statuses if "完成" in status or "成功" in status)
         failed = sum(1 for status in self._statuses if "失败" in status or "错误" in status)
         if self.task_waiting_label:
@@ -1282,8 +1379,14 @@ class SuperResolutionFeature(ToolFeature):
         self.config.set("keep_temp", settings.keep_temp)
 
     def update_file_context(self, files: list[Path], selected_file: Path | None, logger: Callable[[str], None] | None = None) -> None:
-        if not self._files and files:
-            self.add_files(files)
+        if self._syncing_external_file_panel:
+            self._update_preview(logger)
+            return
+        statuses_by_path = {path.resolve(): self._statuses[index] for index, path in enumerate(self._files)}
+        self._files = list(files)
+        self._statuses = [statuses_by_path.get(path.resolve(), "待处理") for path in self._files]
+        self._selected_file = selected_file if selected_file in self._files else (self._files[0] if self._files else None)
+        self._refresh_file_table(keep_selection=True)
         self._update_preview(logger)
 
     def get_output_dir(self) -> Path | None:

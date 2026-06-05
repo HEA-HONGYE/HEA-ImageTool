@@ -8,6 +8,8 @@ from PySide6.QtWidgets import QFileDialog, QFrame, QHBoxLayout, QLabel, QListWid
 
 from image_toolbox.core.image_ops import is_supported_image
 
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+
 
 class FilePanel(QFrame):
     files_changed = Signal()
@@ -19,6 +21,9 @@ class FilePanel(QFrame):
         self.setAcceptDrops(True)
         self.files: list[Path] = []
         self.statuses: list[str] = []
+        self.dialog_title = "选择图片"
+        self.dialog_filter = "Images (*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff)"
+        self.supported_suffixes = set(IMAGE_SUFFIXES)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -72,16 +77,27 @@ class FilePanel(QFrame):
     def choose_files(self) -> None:
         selected, _ = QFileDialog.getOpenFileNames(
             self,
-            "选择图片",
+            self.dialog_title,
             str(Path.cwd()),
-            "Images (*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff)",
+            self.dialog_filter,
         )
         self.add_files([Path(item) for item in selected])
+
+    def configure_media_mode(self, enabled: bool) -> None:
+        if enabled:
+            self.dialog_title = "选择媒体文件"
+            self.dialog_filter = "Media Files (*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff *.gif *.apng *.mp4 *.mov *.mkv *.avi *.webm *.m4v)"
+            self.supported_suffixes = IMAGE_SUFFIXES | {".gif", ".apng", ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
+            return
+        self.dialog_title = "选择图片"
+        self.dialog_filter = "Images (*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff)"
+        self.supported_suffixes = set(IMAGE_SUFFIXES)
 
     def add_files(self, paths: list[Path]) -> None:
         existing = {path.resolve() for path in self.files}
         for path in paths:
-            if path.exists() and is_supported_image(path) and path.resolve() not in existing:
+            supported = is_supported_image(path) if self.supported_suffixes == IMAGE_SUFFIXES else path.suffix.lower() in self.supported_suffixes
+            if path.exists() and supported and path.resolve() not in existing:
                 self.files.append(path)
                 self.statuses.append("待处理")
                 existing.add(path.resolve())
@@ -91,6 +107,22 @@ class FilePanel(QFrame):
         self._update_info(self.list_widget.currentRow())
         self._refresh_summary()
         self.files_changed.emit()
+
+    def set_files(self, paths: list[Path], statuses: list[str] | None = None, emit_changed: bool = False) -> None:
+        self.files = list(paths)
+        self.statuses = list(statuses or ["待处理"] * len(self.files))
+        if len(self.statuses) < len(self.files):
+            self.statuses.extend(["待处理"] * (len(self.files) - len(self.statuses)))
+        self.statuses = self.statuses[: len(self.files)]
+        self.list_widget.clear()
+        for path, status in zip(self.files, self.statuses):
+            self._append_task_item(path, status)
+        if self.files:
+            self.list_widget.setCurrentRow(0)
+        self._update_info(self.list_widget.currentRow())
+        self._refresh_summary()
+        if emit_changed:
+            self.files_changed.emit()
 
     def clear_files(self) -> None:
         self.files.clear()
@@ -169,9 +201,11 @@ class FilePanel(QFrame):
         return row
 
     def _status_progress(self, status: str) -> int:
+        if "待" in status or "等待" in status:
+            return 0
         if "完成" in status or "成功" in status or "Done" in status:
             return 100
-        if "处理" in status or "运行" in status:
+        if "处理中" in status or "运行中" in status:
             return 48
         if "失败" in status:
             return 100
@@ -179,7 +213,7 @@ class FilePanel(QFrame):
 
     def _refresh_summary(self) -> None:
         total = len(self.files)
-        running = sum(1 for status in self.statuses if "处理" in status or "运行" in status)
+        running = sum(1 for status in self.statuses if ("处理中" in status or "运行中" in status) and "待" not in status)
         waiting = sum(1 for status in self.statuses if "待" in status or "等待" in status)
         self.count_label.setText(f"{total} 个任务")
         self.running_label.setText(f"运行中 {running}")
@@ -212,4 +246,7 @@ class FilePanel(QFrame):
                 f"状态：{status}\n名称：{path.name}\n格式：{fmt}\n尺寸：{width} x {height}\n色彩：{mode}\n大小：{size_kb:.1f} KB\n路径：{path}"
             )
         except Exception as exc:
-            self.info_label.setText(f"无法读取图片信息：{exc}")
+            if self.supported_suffixes != IMAGE_SUFFIXES and path.suffix.lower() in self.supported_suffixes:
+                self.info_label.setText(f"状态：{status}\n名称：{path.name}\n格式：{path.suffix.upper().lstrip('.') or '未知'}\n大小：{size_kb:.1f} KB\n路径：{path}")
+            else:
+                self.info_label.setText(f"无法读取图片信息：{exc}")
