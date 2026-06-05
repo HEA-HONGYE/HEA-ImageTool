@@ -75,6 +75,7 @@ class PersonalizationPanel(QWidget):
         self.backgrounds_dir = Path.cwd() / "assets" / "backgrounds"
         self.opacity_slider: QSlider | None = None
         self.component_opacity_slider: QSlider | None = None
+        self.motion_slider: QSlider | None = None
         self.bg_opacity_slider: QSlider | None = None
         self.blur_slider: QSlider | None = None
         self.fit_combo: QComboBox | None = None
@@ -102,6 +103,8 @@ class PersonalizationPanel(QWidget):
         opacity_row = self._build_slider("window", 70, 100, self.config.get("window_opacity", 100, int))
         basic_form.addRow("窗口不透明度", opacity_row)
         component_opacity_row = self._build_slider("component", 35, 100, self.config.get("component_opacity", 100, int))
+        motion_row = self._build_motion_slider(self.config.get("motion_effects", 0, int))
+        basic_form.addRow("动态效果", motion_row)
         basic_form.addRow("组件透明度", component_opacity_row)
         self.show_icon_checkbox = QCheckBox("打开启动器时显示 HEA 图标")
         self.show_icon_checkbox.setChecked(self.config.get("show_launcher_icon", True, bool))
@@ -153,7 +156,7 @@ class PersonalizationPanel(QWidget):
         layout.addWidget(bg_group)
         layout.addStretch()
 
-        for widget in [self.opacity_slider, self.component_opacity_slider, self.bg_opacity_slider, self.blur_slider, self.fit_combo, self.overlay_checkbox, self.show_icon_checkbox]:
+        for widget in [self.opacity_slider, self.component_opacity_slider, self.motion_slider, self.bg_opacity_slider, self.blur_slider, self.fit_combo, self.overlay_checkbox, self.show_icon_checkbox]:
             if isinstance(widget, QSlider):
                 widget.valueChanged.connect(lambda _value: self._save_and_apply())
             elif widget is not None:
@@ -179,6 +182,31 @@ class PersonalizationPanel(QWidget):
             self.bg_opacity_slider = slider
         else:
             self.blur_slider = slider
+        return container
+
+    def _build_motion_slider(self, value: int) -> QWidget:
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+
+        low_label = QLabel("无动态效果")
+        low_label.setObjectName("MutedText")
+        high_label = QLabel("高动态效果")
+        high_label.setObjectName("MutedText")
+
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(0, 1)
+        slider.setSingleStep(1)
+        slider.setPageStep(1)
+        slider.setTickInterval(1)
+        slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        slider.setValue(1 if value else 0)
+        self.motion_slider = slider
+
+        row.addWidget(low_label)
+        row.addWidget(slider, 1)
+        row.addWidget(high_label)
         return container
 
     def _choose_background(self) -> None:
@@ -209,6 +237,7 @@ class PersonalizationPanel(QWidget):
     def _save_and_apply(self) -> None:
         self.config.set("window_opacity", self.opacity_slider.value() if self.opacity_slider else 100)
         self.config.set("component_opacity", self.component_opacity_slider.value() if self.component_opacity_slider else 100)
+        self.config.set("motion_effects", self.motion_slider.value() if self.motion_slider else 0)
         self.config.set("background_path", self.background_edit.text().strip() if self.background_edit else "")
         self.config.set("background_fit", self.fit_combo.currentData() if self.fit_combo else "center")
         self.config.set("background_opacity", self.bg_opacity_slider.value() if self.bg_opacity_slider else 24)
@@ -461,9 +490,9 @@ class MainWindow(QMainWindow):
         self._add_nav_button(layout, "compress", "◱", "图片压缩")
         self._add_nav_button(layout, "convert", "⇄", "格式转换")
         self._add_nav_button(layout, "resize", "#", "批量改尺寸")
-        self._add_nav_button(layout, "super_resolution", "✦", "智能媒体增强")
         self._add_nav_button(layout, "watermark", "◇", "批量加水印")
         self._add_nav_button(layout, "rename", "Aa", "批量重命名")
+        self._add_nav_button(layout, "super_resolution", "✦", "智能媒体增强")
         layout.addStretch()
 
         self.run_button = QPushButton("开始处理")
@@ -481,7 +510,7 @@ class MainWindow(QMainWindow):
         return sidebar
 
     def _add_nav_button(self, layout: QVBoxLayout, key: str, icon: str, text: str) -> None:
-        button = QPushButton(f"{icon:<2}  {text}")
+        button = QPushButton(text)
         button.setObjectName("NavButton")
         button.setCheckable(True)
         button.setFixedHeight(40)
@@ -714,12 +743,13 @@ class MainWindow(QMainWindow):
 
     def _build_bottom_panel(self) -> QWidget:
         panel = GlassStatusBar()
+        panel.setFixedHeight(48)
         layout = QHBoxLayout(panel)
-        layout.setContentsMargins(12, 4, 12, 4)
-        layout.setSpacing(10)
+        layout.setContentsMargins(16, 6, 16, 6)
+        layout.setSpacing(12)
 
         self.status_label = QLabel("状态：就绪")
-        self.status_label.setObjectName("MutedText")
+        self.status_label.setObjectName("BottomStatusText")
         layout.addWidget(self.status_label)
 
         self.progress_bar = QProgressBar()
@@ -727,26 +757,27 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setFixedWidth(180)
+        self.progress_bar.setFixedHeight(16)
         layout.addWidget(self.progress_bar)
 
         self.progress_percent_label = QLabel("0%")
-        self.progress_percent_label.setObjectName("MutedText")
+        self.progress_percent_label.setObjectName("BottomStatusText")
         self.progress_percent_label.setFixedWidth(42)
         layout.addWidget(self.progress_percent_label)
 
         self.current_progress_label = QLabel("当前：未开始")
-        self.current_progress_label.setObjectName("MutedText")
+        self.current_progress_label.setObjectName("BottomStatusText")
         layout.addWidget(self.current_progress_label, 1)
 
         self.settings_button = QPushButton("设置")
-        self.settings_button.setObjectName("GhostButton")
-        self.settings_button.setFixedHeight(26)
+        self.settings_button.setObjectName("BottomActionButton")
+        self.settings_button.setFixedSize(78, 34)
         self.settings_button.clicked.connect(self.show_settings_dialog)
         layout.addWidget(self.settings_button)
 
         log_button = QPushButton("查看日志")
-        log_button.setObjectName("GhostButton")
-        log_button.setFixedHeight(26)
+        log_button.setObjectName("BottomActionButton")
+        log_button.setFixedSize(96, 34)
         log_button.clicked.connect(self.show_log_dialog)
         layout.addWidget(log_button)
 

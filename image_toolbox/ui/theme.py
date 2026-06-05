@@ -81,7 +81,11 @@ QFrame#RightPanel {{
 }}
 
 QFrame#BottomPanel, QFrame#GlassStatusBar {{
-    border-radius: {TOKENS.radius_card}px;
+    border-radius: 18px;
+}}
+
+QFrame#GlassStatusBar {{
+    background: rgba(255, 255, 255, 235);
 }}
 
 QWidget#LiquidHome {{
@@ -121,6 +125,12 @@ QLabel#MutedText,
 QLabel#LiquidMutedText {{
     color: {TOKENS.text_muted};
     font-size: {TOKENS.font_caption}px;
+}}
+
+QLabel#BottomStatusText {{
+    color: #000000;
+    font-size: 13px;
+    font-weight: 600;
 }}
 
 QLabel#IntroText {{
@@ -177,6 +187,21 @@ QPushButton#LiquidPillButton:hover {{
     background: #F8FAFD;
 }}
 
+QPushButton#BottomActionButton {{
+    background: #FFFFFF;
+    border: 1px solid {TOKENS.border_soft};
+    border-radius: 14px;
+    color: #000000;
+    font-size: 13px;
+    font-weight: 760;
+    padding: 0 14px;
+}}
+
+QPushButton#BottomActionButton:hover {{
+    background: #F8FAFD;
+    border-color: rgba(47, 125, 246, 80);
+}}
+
 QPushButton#LiquidPillButton[variant="primary"] {{
     background: {TOKENS.accent};
     color: white;
@@ -190,10 +215,10 @@ QPushButton#LiquidPillButton[variant="soft"] {{
 QPushButton#NavButton {{
     background: transparent;
     border: 0;
-    color: #344054;
+    color: #000000;
     text-align: left;
-    padding: 0 12px;
-    border-radius: 10px;
+    padding: 0 16px;
+    border-radius: 12px;
     min-height: 40px;
     max-height: 40px;
     font-size: 13px;
@@ -316,7 +341,7 @@ QProgressBar,
 QProgressBar#TaskMiniProgress {{
     background: rgba(225, 234, 247, 210);
     border: 0;
-    border-radius: 5px;
+    border-radius: 8px;
     height: 10px;
     text-align: center;
 }}
@@ -326,6 +351,14 @@ QProgressBar#TaskMiniProgress::chunk {{
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
         stop:0 #2F7DF6,
         stop:1 #35C28C);
+    border-radius: 8px;
+}}
+
+QProgressBar#TaskMiniProgress {{
+    border-radius: 5px;
+}}
+
+QProgressBar#TaskMiniProgress::chunk {{
     border-radius: 5px;
 }}
 
@@ -390,6 +423,33 @@ QWidget#SuperResolutionWorkbench {{
     background: transparent;
 }}
 
+QScrollArea {{
+    background: transparent;
+    border: 0;
+}}
+
+QScrollBar:vertical {{
+    background: rgba(255, 255, 255, 80);
+    width: 12px;
+    border-radius: 6px;
+    margin: 2px;
+}}
+
+QScrollBar::handle:vertical {{
+    background: rgba(118, 134, 159, 120);
+    border-radius: 6px;
+    min-height: 44px;
+}}
+
+QScrollBar::handle:vertical:hover {{
+    background: rgba(47, 125, 246, 150);
+}}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {{
+    height: 0;
+}}
+
 QFrame#SuperMainColumn {{
     background: transparent;
     border: 0;
@@ -411,6 +471,10 @@ QFrame#SuperWorkflowBar {{
 
 QFrame#SuperStatusBar {{
     border-radius: 12px;
+}}
+
+QFrame#SuperTaskCenter {{
+    border-radius: {TOKENS.radius_shell}px;
 }}
 
 QFrame#SuperAdvancedPanel {{

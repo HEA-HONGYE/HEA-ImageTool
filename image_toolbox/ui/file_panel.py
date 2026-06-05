@@ -43,7 +43,7 @@ class FilePanel(QFrame):
         layout.addLayout(stats)
 
         buttons = QHBoxLayout()
-        add_button = QPushButton("添加图片")
+        add_button = QPushButton("添加文件")
         clear_button = QPushButton("清空")
         clear_button.setObjectName("GhostButton")
         add_button.clicked.connect(self.choose_files)
@@ -57,7 +57,7 @@ class FilePanel(QFrame):
         self.list_widget.currentRowChanged.connect(self._on_current_row_changed)
         layout.addWidget(self.list_widget, 1)
 
-        self.info_label = QLabel("拖入图片或点击添加。")
+        self.info_label = QLabel("拖入文件或点击添加。")
         self.info_label.setObjectName("MutedText")
         self.info_label.setWordWrap(True)
         self.info_label.setAlignment(Qt.AlignTop)
@@ -96,7 +96,7 @@ class FilePanel(QFrame):
         self.files.clear()
         self.statuses.clear()
         self.list_widget.clear()
-        self.info_label.setText("拖入图片或点击添加。")
+        self.info_label.setText("拖入文件或点击添加。")
         self._refresh_summary()
         self.files_changed.emit()
 
@@ -197,7 +197,7 @@ class FilePanel(QFrame):
 
     def _update_info(self, row: int) -> None:
         if row < 0 or row >= len(self.files):
-            self.info_label.setText("拖入图片或点击添加。")
+            self.info_label.setText("拖入文件或点击添加。")
             return
 
         path = self.files[row]
