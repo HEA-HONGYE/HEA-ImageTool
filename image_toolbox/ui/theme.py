@@ -6,10 +6,10 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class ThemeTokens:
     background: str = "#F5F7FB"
-    surface: str = "rgba(255, 255, 255, 199)"
-    surface_strong: str = "rgba(255, 255, 255, 230)"
-    surface_soft: str = "rgba(255, 255, 255, 150)"
-    border: str = "rgba(255, 255, 255, 64)"
+    surface: str = "#FFFFFF"
+    surface_strong: str = "#FFFFFF"
+    surface_soft: str = "#F8FAFD"
+    border: str = "#FFFFFF"
     border_soft: str = "rgba(118, 134, 159, 58)"
     text: str = "#111827"
     text_muted: str = "#667085"
@@ -167,14 +167,14 @@ QPushButton:disabled {{
 
 QPushButton#GhostButton,
 QPushButton#LiquidPillButton {{
-    background: rgba(255, 255, 255, 180);
+    background: #FFFFFF;
     border: 1px solid {TOKENS.border_soft};
     color: #21314D;
 }}
 
 QPushButton#GhostButton:hover,
 QPushButton#LiquidPillButton:hover {{
-    background: rgba(255, 255, 255, 230);
+    background: #F8FAFD;
 }}
 
 QPushButton#LiquidPillButton[variant="primary"] {{
@@ -211,7 +211,7 @@ QPushButton#NavButton:checked {{
 
 QFrame#FeatureCard,
 QGroupBox {{
-    background: rgba(255, 255, 255, 178);
+    background: #FFFFFF;
     border: 1px solid {TOKENS.border_soft};
     border-radius: {TOKENS.radius_card}px;
     color: {TOKENS.text};
@@ -231,7 +231,7 @@ QGroupBox::title {{
 }}
 
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QListWidget {{
-    background: rgba(255, 255, 255, 205);
+    background: #FFFFFF;
     border: 1px solid {TOKENS.border_soft};
     border-radius: {TOKENS.radius_input}px;
     color: {TOKENS.text};
@@ -347,31 +347,31 @@ QFrame#LiquidGlassCard {{
 }}
 
 QFrame#LiquidGlassCard[variant="blue"] {{
-    background: rgba(235, 245, 255, 214);
+    background: #EBF5FF;
 }}
 
 QFrame#LiquidGlassCard[variant="green"] {{
-    background: rgba(237, 251, 244, 214);
+    background: #EDFBF4;
 }}
 
 QFrame#LiquidGlassCard[variant="purple"] {{
-    background: rgba(246, 240, 255, 214);
+    background: #F6F0FF;
 }}
 
 QFrame#LiquidTaskList {{
-    background: rgba(255, 255, 255, 150);
+    background: #FFFFFF;
     border: 1px solid {TOKENS.border_soft};
     border-radius: 16px;
 }}
 
 QFrame#LiquidTaskHeaderRow {{
-    background: rgba(232, 242, 255, 170);
+    background: #E8F2FF;
     border-top-left-radius: 16px;
     border-top-right-radius: 16px;
 }}
 
 QFrame#LiquidTaskRow {{
-    background: rgba(255, 255, 255, 95);
+    background: #FFFFFF;
     border-bottom: 1px solid rgba(65, 93, 132, 20);
 }}
 
@@ -400,7 +400,7 @@ QFrame#SuperModeBar,
 QFrame#SuperTaskCenter,
 QFrame#SuperWorkflowBar,
 QFrame#SuperStatusBar {{
-    background: rgba(255, 255, 255, 205);
+    background: #FFFFFF;
     border: 1px solid rgba(118, 134, 159, 46);
     border-radius: 16px;
 }}
@@ -414,13 +414,13 @@ QFrame#SuperStatusBar {{
 }}
 
 QFrame#SuperAdvancedPanel {{
-    background: rgba(245, 247, 251, 130);
+    background: #F5F7FB;
     border: 0;
     border-radius: 12px;
 }}
 
 QLabel#SuperDropZone {{
-    background: rgba(245, 247, 251, 150);
+    background: #F5F7FB;
     border: 1px dashed rgba(118, 134, 159, 90);
     border-radius: 14px;
     color: #667085;
@@ -428,7 +428,7 @@ QLabel#SuperDropZone {{
 }}
 
 QTableWidget#SuperFileTable {{
-    background: rgba(255, 255, 255, 170);
+    background: #FFFFFF;
     gridline-color: rgba(118, 134, 159, 30);
     border-radius: 12px;
 }}
@@ -455,7 +455,7 @@ QLabel#SuperWorkflowText {{
 }}
 
 QLabel#SuperTaskEmpty {{
-    background: rgba(245, 247, 251, 140);
+    background: #F5F7FB;
     border: 1px dashed rgba(118, 134, 159, 70);
     border-radius: 14px;
     color: #667085;
@@ -463,7 +463,7 @@ QLabel#SuperTaskEmpty {{
 }}
 
 QPlainTextEdit#SuperRecentLog {{
-    background: rgba(245, 247, 251, 155);
+    background: #F5F7FB;
     border: 1px solid rgba(118, 134, 159, 45);
     border-radius: 12px;
     color: #344054;

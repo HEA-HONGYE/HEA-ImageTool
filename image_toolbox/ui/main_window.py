@@ -4,8 +4,8 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QSize, Qt, QThreadPool, QUrl
-from PySide6.QtGui import QCloseEvent, QDesktopServices
-from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSlider, QStackedWidget, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QPainter, QPixmap, QResizeEvent
+from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QFormLayout, QGraphicsOpacityEffect, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSlider, QStackedWidget, QTextEdit, QVBoxLayout, QWidget
 
 from image_toolbox import APP_NAME, APP_VERSION
 from image_toolbox.core.config import AppConfig
@@ -74,6 +74,7 @@ class PersonalizationPanel(QWidget):
         self.apply_callback = apply_callback
         self.backgrounds_dir = Path.cwd() / "assets" / "backgrounds"
         self.opacity_slider: QSlider | None = None
+        self.component_opacity_slider: QSlider | None = None
         self.bg_opacity_slider: QSlider | None = None
         self.blur_slider: QSlider | None = None
         self.fit_combo: QComboBox | None = None
@@ -98,8 +99,10 @@ class PersonalizationPanel(QWidget):
         basic_group = QGroupBox("基础")
         basic_form = QFormLayout(basic_group)
         basic_form.setSpacing(12)
-        opacity_row = self._build_slider(70, 100, self.config.get("window_opacity", 100, int))
+        opacity_row = self._build_slider("window", 70, 100, self.config.get("window_opacity", 100, int))
         basic_form.addRow("窗口不透明度", opacity_row)
+        component_opacity_row = self._build_slider("component", 35, 100, self.config.get("component_opacity", 100, int))
+        basic_form.addRow("组件透明度", component_opacity_row)
         self.show_icon_checkbox = QCheckBox("打开启动器时显示 HEA 图标")
         self.show_icon_checkbox.setChecked(self.config.get("show_launcher_icon", True, bool))
         basic_form.addRow("", self.show_icon_checkbox)
@@ -109,7 +112,8 @@ class PersonalizationPanel(QWidget):
         bg_form = QFormLayout(bg_group)
         bg_form.setSpacing(12)
         self.background_edit = QLineEdit(self.config.get("background_path", ""))
-        browse_button = QPushButton("选择图片")
+        self.background_edit.editingFinished.connect(self._save_and_apply)
+        browse_button = QPushButton("插入图片")
         browse_button.clicked.connect(self._choose_background)
         background_row = QHBoxLayout()
         background_row.addWidget(self.background_edit, 1)
@@ -117,15 +121,15 @@ class PersonalizationPanel(QWidget):
         bg_form.addRow("背景图片", background_row)
 
         self.fit_combo = QComboBox()
-        self.fit_combo.addItem("居中", "center")
+        self.fit_combo.addItem("自动裁剪填充", "center")
         self.fit_combo.addItem("拉伸填充", "stretch")
         self.fit_combo.addItem("平铺", "tile")
         self.fit_combo.setCurrentIndex(max(0, self.fit_combo.findData(self.config.get("background_fit", "center"))))
         bg_form.addRow("适应方式", self.fit_combo)
 
-        bg_opacity_row = self._build_slider(0, 100, self.config.get("background_opacity", 24, int))
-        bg_form.addRow("背景不透明度", bg_opacity_row)
-        blur_row = self._build_slider(0, 20, self.config.get("background_blur", 0, int))
+        bg_opacity_row = self._build_slider("background", 0, 100, self.config.get("background_opacity", 24, int))
+        bg_form.addRow("背景透明度", bg_opacity_row)
+        blur_row = self._build_slider("blur", 0, 20, self.config.get("background_blur", 0, int))
         bg_form.addRow("背景模糊", blur_row)
         self.overlay_checkbox = QCheckBox("叠加彩色背景")
         self.overlay_checkbox.setChecked(self.config.get("overlay_enabled", True, bool))
@@ -149,13 +153,13 @@ class PersonalizationPanel(QWidget):
         layout.addWidget(bg_group)
         layout.addStretch()
 
-        for widget in [self.opacity_slider, self.bg_opacity_slider, self.blur_slider, self.fit_combo, self.overlay_checkbox, self.show_icon_checkbox]:
+        for widget in [self.opacity_slider, self.component_opacity_slider, self.bg_opacity_slider, self.blur_slider, self.fit_combo, self.overlay_checkbox, self.show_icon_checkbox]:
             if isinstance(widget, QSlider):
                 widget.valueChanged.connect(lambda _value: self._save_and_apply())
             elif widget is not None:
                 widget.currentIndexChanged.connect(lambda _index: self._save_and_apply()) if isinstance(widget, QComboBox) else widget.toggled.connect(lambda _checked: self._save_and_apply())
 
-    def _build_slider(self, minimum: int, maximum: int, value: int) -> QWidget:
+    def _build_slider(self, target: str, minimum: int, maximum: int, value: int) -> QWidget:
         container = QWidget()
         row = QHBoxLayout(container)
         row.setContentsMargins(0, 0, 0, 0)
@@ -167,9 +171,11 @@ class PersonalizationPanel(QWidget):
         slider.valueChanged.connect(lambda next_value: value_label.setText(str(next_value)))
         row.addWidget(slider, 1)
         row.addWidget(value_label)
-        if minimum == 70 and maximum == 100:
+        if target == "window":
             self.opacity_slider = slider
-        elif maximum == 100:
+        elif target == "component":
+            self.component_opacity_slider = slider
+        elif target == "background":
             self.bg_opacity_slider = slider
         else:
             self.blur_slider = slider
@@ -202,6 +208,7 @@ class PersonalizationPanel(QWidget):
 
     def _save_and_apply(self) -> None:
         self.config.set("window_opacity", self.opacity_slider.value() if self.opacity_slider else 100)
+        self.config.set("component_opacity", self.component_opacity_slider.value() if self.component_opacity_slider else 100)
         self.config.set("background_path", self.background_edit.text().strip() if self.background_edit else "")
         self.config.set("background_fit", self.fit_combo.currentData() if self.fit_combo else "center")
         self.config.set("background_opacity", self.bg_opacity_slider.value() if self.bg_opacity_slider else 24)
@@ -363,12 +370,24 @@ class MainWindow(QMainWindow):
         self.toolbar_health: QLabel | None = None
         self.toolbar_compact_status: QLabel | None = None
         self.bottom_panel: QWidget | None = None
+        self.background_label: QLabel | None = None
+        self.background_pixmap: QPixmap | None = None
+        self.background_effect: QGraphicsOpacityEffect | None = None
+        self.background_fit_mode = "center"
         self.current_task: ImageBatchTask | None = None
         self.last_failed_files: list[Path] = []
         self.last_failed_feature_key: str | None = None
 
         self.shell = AppShell()
         self.setCentralWidget(self.shell)
+        self.background_label = QLabel(self.shell)
+        self.background_label.setObjectName("PersonalizationBackground")
+        self.background_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.background_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.background_effect = QGraphicsOpacityEffect(self.background_label)
+        self.background_label.setGraphicsEffect(self.background_effect)
+        self.background_label.hide()
+        self.background_label.lower()
         self._build_toolbar(self.shell.toolbar)
         self.shell.toolbar.hide()
 
@@ -818,22 +837,119 @@ class MainWindow(QMainWindow):
         background_path = config.get("background_path", "")
         fit_mode = config.get("background_fit", "center")
         background_opacity = max(0, min(100, config.get("background_opacity", 24, int)))
-        overlay_enabled = config.get("overlay_enabled", True, bool)
-        overlay_alpha = max(110, min(245, 255 - int(background_opacity * 1.35))) if overlay_enabled else 0
+        component_opacity = max(35, min(100, config.get("component_opacity", 100, int)))
+        component_alpha = int(255 * component_opacity / 100)
+        component_style = f"""
+            QFrame#GlassToolbar,
+            QFrame#GlassSidebar,
+            QFrame#GlassPanel,
+            QFrame#GlassStatusBar,
+            QFrame#RightPanel,
+            QFrame#BottomPanel,
+            QFrame#LiquidShell,
+            QFrame#LiquidHeroPanel,
+            QFrame#LiquidGlassCard,
+            QFrame#FeatureCard,
+            QFrame#SuperGlassCard,
+            QFrame#SuperModeBar,
+            QFrame#SuperTaskCenter,
+            QFrame#SuperWorkflowBar,
+            QFrame#SuperStatusBar,
+            QFrame#LiquidTaskList,
+            QFrame#LiquidTaskHeaderRow,
+            QFrame#LiquidTaskRow,
+            QGroupBox {{
+                background: rgba(255, 255, 255, {component_alpha});
+            }}
+            QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QListWidget, QTableWidget {{
+                background: rgba(255, 255, 255, {component_alpha});
+            }}
+            QPushButton#GhostButton,
+            QPushButton#NavButton,
+            QPushButton#LiquidPillButton,
+            QLabel#QueueStatPill,
+            QWidget#TaskQueueItem,
+            QLabel#TaskThumb,
+            QFrame#SuperAdvancedPanel,
+            QPlainTextEdit#SuperRecentLog,
+            QLabel#SuperDropZone,
+            QLabel#SuperTaskEmpty {{
+                background: rgba(245, 247, 251, {component_alpha});
+            }}
+        """
 
         if background_path and Path(background_path).exists():
-            normalized_path = Path(background_path).as_posix()
-            if fit_mode == "stretch":
-                image_rule = f'border-image: url("{normalized_path}") 0 0 0 0 stretch stretch;'
-            elif fit_mode == "tile":
-                image_rule = f'background-image: url("{normalized_path}"); background-repeat: repeat;'
-            else:
-                image_rule = f'background-image: url("{normalized_path}"); background-repeat: no-repeat; background-position: center;'
-            overlay_rule = f"background-color: rgba(245, 247, 251, {overlay_alpha});" if overlay_enabled else "background-color: transparent;"
-            self.shell.setStyleSheet(f"QWidget#AppShell {{ {image_rule} {overlay_rule} }}")
+            pixmap = QPixmap(str(Path(background_path)))
+            self.background_pixmap = pixmap if not pixmap.isNull() else None
+        else:
+            self.background_pixmap = None
+        self.background_fit_mode = fit_mode
+        if self.background_effect:
+            self.background_effect.setOpacity(background_opacity / 100)
+        self._update_background_layer()
+
+        self.shell.setStyleSheet(component_style if component_opacity < 100 else "")
+
+    def _update_background_layer(self) -> None:
+        if not self.background_label:
+            return
+        self.background_label.setGeometry(self.shell.rect())
+        self.background_label.lower()
+        if not self.background_pixmap or self.background_pixmap.isNull():
+            self.background_label.clear()
+            self.background_label.hide()
             return
 
-        self.shell.setStyleSheet("")
+        target_size = self.background_label.size()
+        if target_size.isEmpty():
+            return
+        if self.background_fit_mode == "stretch":
+            pixmap = self.background_pixmap.scaled(
+                target_size,
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        elif self.background_fit_mode == "tile":
+            pixmap = self._build_tiled_background(target_size)
+        else:
+            pixmap = self._build_cover_background(target_size)
+        self.background_label.setPixmap(pixmap)
+        self.background_label.show()
+        self.background_label.lower()
+
+    def _build_cover_background(self, target_size: QSize) -> QPixmap:
+        if not self.background_pixmap or self.background_pixmap.isNull():
+            return QPixmap()
+        scaled = self.background_pixmap.scaled(
+            target_size,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        crop_x = max(0, (scaled.width() - target_size.width()) // 2)
+        crop_y = max(0, (scaled.height() - target_size.height()) // 2)
+        return scaled.copy(crop_x, crop_y, target_size.width(), target_size.height())
+
+    def _build_tiled_background(self, target_size: QSize) -> QPixmap:
+        if not self.background_pixmap or self.background_pixmap.isNull():
+            return QPixmap()
+        tile_width = max(1, self.background_pixmap.width())
+        tile_height = max(1, self.background_pixmap.height())
+        canvas = QPixmap(target_size)
+        canvas.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(canvas)
+        y = 0
+        while y < target_size.height():
+            x = 0
+            while x < target_size.width():
+                painter.drawPixmap(x, y, self.background_pixmap)
+                x += tile_width
+            y += tile_height
+        painter.end()
+        return canvas
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._update_background_layer()
 
     def _set_toolbar_compact(self, compact: bool) -> None:
         toolbar_layout = self.shell.toolbar.layout()
