@@ -370,6 +370,7 @@ class MainWindow(QMainWindow):
         self.shell = AppShell()
         self.setCentralWidget(self.shell)
         self._build_toolbar(self.shell.toolbar)
+        self.shell.toolbar.hide()
 
         content = QHBoxLayout()
         content.setContentsMargins(0, 0, 0, 0)
@@ -457,6 +458,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.run_button)
         layout.addWidget(self.pause_button)
         layout.addWidget(self.cancel_button)
+        self._set_action_buttons_visible(False)
         return sidebar
 
     def _add_nav_button(self, layout: QVBoxLayout, key: str, icon: str, text: str) -> None:
@@ -485,11 +487,13 @@ class MainWindow(QMainWindow):
         self.setUpdatesEnabled(False)
         processing_pages = {"compress", "convert", "resize", "watermark", "rename"}
         is_processing_page = key in processing_pages
+        runnable_pages = set(self.features)
         try:
             self.stack.setCurrentIndex(self.page_keys.index(key))
             for button_key, button in self.nav_buttons.items():
                 button.setChecked(button_key == key)
-            self._set_toolbar_compact(is_processing_page)
+            self.shell.toolbar.hide()
+            self._set_action_buttons_visible(key in runnable_pages)
             if key == "super_resolution" and hasattr(self.features.get("super_resolution"), "refresh_from_engine_settings"):
                 self.features["super_resolution"].refresh_from_engine_settings()
             if hasattr(self, "file_panel"):
@@ -661,6 +665,11 @@ class MainWindow(QMainWindow):
             self.status_label.setText("状态：处理中" if is_running else "状态：就绪")
         if self.toolbar_compact_status:
             self.toolbar_compact_status.setText("状态：处理中" if is_running else "状态：就绪")
+
+    def _set_action_buttons_visible(self, visible: bool) -> None:
+        for button in [self.run_button, self.pause_button, self.cancel_button]:
+            if button:
+                button.setVisible(visible)
 
     def _log(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
