@@ -5,9 +5,10 @@ from pathlib import Path
 
 from PySide6.QtCore import QPoint, QSize, Qt, QThreadPool, QUrl
 from PySide6.QtGui import QCloseEvent, QDesktopServices
-from PySide6.QtWidgets import QDialog, QFrame, QGroupBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea, QStackedWidget, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSlider, QStackedWidget, QTextEdit, QVBoxLayout, QWidget
 
 from image_toolbox import APP_NAME, APP_VERSION
+from image_toolbox.core.config import AppConfig
 from image_toolbox.core.super_resolution import SuperResolutionSummary
 from image_toolbox.core.tasks import ImageBatchTask
 from image_toolbox.core.tool_manager import get_tool_manager
@@ -66,14 +67,159 @@ class SettingsContentPage(QWidget):
         self.scroll_area.verticalScrollBar().setValue(0)
 
 
+class PersonalizationPanel(QWidget):
+    def __init__(self, apply_callback) -> None:
+        super().__init__()
+        self.config = AppConfig("personalization")
+        self.apply_callback = apply_callback
+        self.backgrounds_dir = Path.cwd() / "assets" / "backgrounds"
+        self.opacity_slider: QSlider | None = None
+        self.bg_opacity_slider: QSlider | None = None
+        self.blur_slider: QSlider | None = None
+        self.fit_combo: QComboBox | None = None
+        self.background_edit: QLineEdit | None = None
+        self.overlay_checkbox: QCheckBox | None = None
+        self.show_icon_checkbox: QCheckBox | None = None
+        self._build()
+
+    def _build(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(14)
+
+        title = QLabel("个性化")
+        title.setObjectName("PanelTitle")
+        hint = QLabel("调整窗口透明度、背景图片和背景叠加效果。")
+        hint.setObjectName("MutedText")
+        hint.setWordWrap(True)
+        layout.addWidget(title)
+        layout.addWidget(hint)
+
+        basic_group = QGroupBox("基础")
+        basic_form = QFormLayout(basic_group)
+        basic_form.setSpacing(12)
+        opacity_row = self._build_slider(70, 100, self.config.get("window_opacity", 100, int))
+        basic_form.addRow("窗口不透明度", opacity_row)
+        self.show_icon_checkbox = QCheckBox("打开启动器时显示 HEA 图标")
+        self.show_icon_checkbox.setChecked(self.config.get("show_launcher_icon", True, bool))
+        basic_form.addRow("", self.show_icon_checkbox)
+        layout.addWidget(basic_group)
+
+        bg_group = QGroupBox("背景图片")
+        bg_form = QFormLayout(bg_group)
+        bg_form.setSpacing(12)
+        self.background_edit = QLineEdit(self.config.get("background_path", ""))
+        browse_button = QPushButton("选择图片")
+        browse_button.clicked.connect(self._choose_background)
+        background_row = QHBoxLayout()
+        background_row.addWidget(self.background_edit, 1)
+        background_row.addWidget(browse_button)
+        bg_form.addRow("背景图片", background_row)
+
+        self.fit_combo = QComboBox()
+        self.fit_combo.addItem("居中", "center")
+        self.fit_combo.addItem("拉伸填充", "stretch")
+        self.fit_combo.addItem("平铺", "tile")
+        self.fit_combo.setCurrentIndex(max(0, self.fit_combo.findData(self.config.get("background_fit", "center"))))
+        bg_form.addRow("适应方式", self.fit_combo)
+
+        bg_opacity_row = self._build_slider(0, 100, self.config.get("background_opacity", 24, int))
+        bg_form.addRow("背景不透明度", bg_opacity_row)
+        blur_row = self._build_slider(0, 20, self.config.get("background_blur", 0, int))
+        bg_form.addRow("背景模糊", blur_row)
+        self.overlay_checkbox = QCheckBox("叠加彩色背景")
+        self.overlay_checkbox.setChecked(self.config.get("overlay_enabled", True, bool))
+        bg_form.addRow("", self.overlay_checkbox)
+
+        actions = QHBoxLayout()
+        open_folder = QPushButton("打开文件夹")
+        open_folder.setObjectName("GhostButton")
+        open_folder.clicked.connect(self._open_background_folder)
+        refresh = QPushButton("刷新背景图片")
+        refresh.setObjectName("GhostButton")
+        refresh.clicked.connect(self._refresh_background)
+        clear = QPushButton("清空背景图片")
+        clear.setObjectName("GhostButton")
+        clear.clicked.connect(self._clear_background)
+        actions.addWidget(open_folder)
+        actions.addWidget(refresh)
+        actions.addWidget(clear)
+        actions.addStretch()
+        bg_form.addRow("", actions)
+        layout.addWidget(bg_group)
+        layout.addStretch()
+
+        for widget in [self.opacity_slider, self.bg_opacity_slider, self.blur_slider, self.fit_combo, self.overlay_checkbox, self.show_icon_checkbox]:
+            if isinstance(widget, QSlider):
+                widget.valueChanged.connect(lambda _value: self._save_and_apply())
+            elif widget is not None:
+                widget.currentIndexChanged.connect(lambda _index: self._save_and_apply()) if isinstance(widget, QComboBox) else widget.toggled.connect(lambda _checked: self._save_and_apply())
+
+    def _build_slider(self, minimum: int, maximum: int, value: int) -> QWidget:
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(minimum, maximum)
+        slider.setValue(max(minimum, min(maximum, value)))
+        value_label = QLabel(str(slider.value()))
+        value_label.setFixedWidth(42)
+        slider.valueChanged.connect(lambda next_value: value_label.setText(str(next_value)))
+        row.addWidget(slider, 1)
+        row.addWidget(value_label)
+        if minimum == 70 and maximum == 100:
+            self.opacity_slider = slider
+        elif maximum == 100:
+            self.bg_opacity_slider = slider
+        else:
+            self.blur_slider = slider
+        return container
+
+    def _choose_background(self) -> None:
+        selected, _ = QFileDialog.getOpenFileName(self, "选择背景图片", str(self.backgrounds_dir), "Images (*.jpg *.jpeg *.png *.webp *.bmp)")
+        if selected and self.background_edit:
+            self.background_edit.setText(selected)
+            self._save_and_apply()
+
+    def _open_background_folder(self) -> None:
+        self.backgrounds_dir.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.backgrounds_dir.resolve())))
+
+    def _refresh_background(self) -> None:
+        if self.background_edit and not self.background_edit.text().strip():
+            images = []
+            if self.backgrounds_dir.exists():
+                for pattern in ["*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp"]:
+                    images.extend(self.backgrounds_dir.glob(pattern))
+            if images:
+                self.background_edit.setText(str(images[0]))
+        self._save_and_apply()
+
+    def _clear_background(self) -> None:
+        if self.background_edit:
+            self.background_edit.clear()
+        self._save_and_apply()
+
+    def _save_and_apply(self) -> None:
+        self.config.set("window_opacity", self.opacity_slider.value() if self.opacity_slider else 100)
+        self.config.set("background_path", self.background_edit.text().strip() if self.background_edit else "")
+        self.config.set("background_fit", self.fit_combo.currentData() if self.fit_combo else "center")
+        self.config.set("background_opacity", self.bg_opacity_slider.value() if self.bg_opacity_slider else 24)
+        self.config.set("background_blur", self.blur_slider.value() if self.blur_slider else 0)
+        self.config.set("overlay_enabled", self.overlay_checkbox.isChecked() if self.overlay_checkbox else True)
+        self.config.set("show_launcher_icon", self.show_icon_checkbox.isChecked() if self.show_icon_checkbox else True)
+        self.apply_callback()
+
+
 class SettingsDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, personalization_callback=None) -> None:
         super().__init__(parent)
+        self.personalization_callback = personalization_callback or (lambda: None)
         self.setObjectName("AppShell")
         self.setWindowTitle("设置")
         self.setWindowFlag(Qt.Window, True)
-        self.setMinimumSize(760, 520)
-        self.resize(980, 640)
+        self.setMinimumSize(920, 620)
+        self.resize(1180, 760)
         self.nav_buttons: dict[str, QPushButton] = {}
         self._centered_once = False
 
@@ -101,6 +247,7 @@ class SettingsDialog(QDialog):
         self._add_settings_page("engine_image", EngineSettingsPanel("image"))
         self._add_settings_page("engine_video", EngineSettingsPanel("video"))
         self._add_settings_page("tool_settings", SettingsContentPage(ToolSettingsPanel()))
+        self._add_settings_page("personalization", SettingsContentPage(PersonalizationPanel(self.personalization_callback)))
 
         self._add_nav_group_label(side_layout, "引擎设置")
         self._add_settings_nav(side_layout, "engine_base", "基础配置")
@@ -109,6 +256,9 @@ class SettingsDialog(QDialog):
         side_layout.addSpacing(8)
         self._add_nav_group_label(side_layout, "工具管理")
         self._add_settings_nav(side_layout, "tool_settings", "工具管理")
+        side_layout.addSpacing(8)
+        self._add_nav_group_label(side_layout, "外观")
+        self._add_settings_nav(side_layout, "personalization", "个性化")
         side_layout.addStretch()
 
         close_button = QPushButton("关闭")
@@ -157,9 +307,12 @@ class SettingsDialog(QDialog):
         parent = self.parentWidget()
         if not parent:
             return
-        parent_size = parent.size()
-        width = min(980, max(760, int(parent_size.width() * 0.62)))
-        height = min(640, max(520, int(parent_size.height() * 0.72)))
+        parent_frame = parent.frameGeometry()
+        available = self.screen().availableGeometry() if self.screen() else parent_frame
+        width = min(int(parent_frame.width() * 0.9), available.width() - 80)
+        height = min(int(parent_frame.height() * 0.82), available.height() - 120)
+        width = max(1040, min(width, 1440))
+        height = max(620, min(height, 820))
         self.resize(width, height)
 
     def _center_on_parent(self) -> None:
@@ -243,6 +396,7 @@ class MainWindow(QMainWindow):
         self.switch_page("home")
         self._set_running(False)
         self._log_tool_health()
+        self._apply_personalization()
 
     def _build_toolbar(self, toolbar: QFrame) -> None:
         layout = QHBoxLayout(toolbar)
@@ -635,7 +789,7 @@ class MainWindow(QMainWindow):
             self.settings_dialog.raise_()
             self.settings_dialog.activateWindow()
             return
-        dialog = SettingsDialog(self)
+        dialog = SettingsDialog(self, self._apply_personalization)
         self.settings_dialog = dialog
 
         def reset_settings_dialog(_result: int) -> None:
@@ -646,6 +800,31 @@ class MainWindow(QMainWindow):
 
         dialog.finished.connect(reset_settings_dialog)
         dialog.show()
+
+    def _apply_personalization(self) -> None:
+        config = AppConfig("personalization")
+        opacity = config.get("window_opacity", 100, int)
+        self.setWindowOpacity(max(70, min(100, opacity)) / 100)
+
+        background_path = config.get("background_path", "")
+        fit_mode = config.get("background_fit", "center")
+        background_opacity = max(0, min(100, config.get("background_opacity", 24, int)))
+        overlay_enabled = config.get("overlay_enabled", True, bool)
+        overlay_alpha = max(110, min(245, 255 - int(background_opacity * 1.35))) if overlay_enabled else 0
+
+        if background_path and Path(background_path).exists():
+            normalized_path = Path(background_path).as_posix()
+            if fit_mode == "stretch":
+                image_rule = f'border-image: url("{normalized_path}") 0 0 0 0 stretch stretch;'
+            elif fit_mode == "tile":
+                image_rule = f'background-image: url("{normalized_path}"); background-repeat: repeat;'
+            else:
+                image_rule = f'background-image: url("{normalized_path}"); background-repeat: no-repeat; background-position: center;'
+            overlay_rule = f"background-color: rgba(245, 247, 251, {overlay_alpha});" if overlay_enabled else "background-color: transparent;"
+            self.shell.setStyleSheet(f"QWidget#AppShell {{ {image_rule} {overlay_rule} }}")
+            return
+
+        self.shell.setStyleSheet("")
 
     def _set_toolbar_compact(self, compact: bool) -> None:
         toolbar_layout = self.shell.toolbar.layout()
