@@ -68,7 +68,7 @@ class GlassToolbar(GlassPanel):
 class GlassStatusBar(GlassPanel):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("GlassStatusBar", parent)
-        self.setFixedHeight(190)
+        self.setFixedHeight(36)
 
 
 class GlassProgressBar(QFrame):

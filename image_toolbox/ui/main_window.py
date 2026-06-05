@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QThreadPool, QUrl
+from PySide6.QtCore import QSize, Qt, QThreadPool, QUrl
 from PySide6.QtGui import QCloseEvent, QDesktopServices
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton, QStackedWidget, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton, QStackedWidget, QTextEdit, QVBoxLayout, QWidget
 
 from image_toolbox import APP_NAME, APP_VERSION
 from image_toolbox.core.super_resolution import SuperResolutionSummary
@@ -22,6 +22,11 @@ from image_toolbox.features.tool_settings import ToolSettingsPanel
 from image_toolbox.features.watermark import WatermarkFeature
 from image_toolbox.ui.file_panel import FilePanel
 from image_toolbox.ui.widgets import AppShell, GlassSidebar, GlassStatusBar
+
+
+class StableStackedWidget(QStackedWidget):
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(0, 0)
 
 
 class MainWindow(QMainWindow):
@@ -46,6 +51,11 @@ class MainWindow(QMainWindow):
         self.cancel_button: QPushButton | None = None
         self.retry_failed_button: QPushButton | None = None
         self.current_progress_label: QLabel | None = None
+        self.status_label: QLabel | None = None
+        self.progress_percent_label: QLabel | None = None
+        self.log_dialog: QDialog | None = None
+        self.log_dialog_box: QTextEdit | None = None
+        self.bottom_panel: QWidget | None = None
         self.current_task: ImageBatchTask | None = None
         self.last_failed_files: list[Path] = []
         self.last_failed_feature_key: str | None = None
@@ -61,7 +71,7 @@ class MainWindow(QMainWindow):
 
         content.addWidget(self._build_sidebar())
 
-        self.stack = QStackedWidget()
+        self.stack = StableStackedWidget()
         self.page_keys: list[str] = []
         self._add_page("home", self._build_home())
         for key, feature in self.features.items():
@@ -76,7 +86,8 @@ class MainWindow(QMainWindow):
         self.file_panel.selection_changed.connect(self._notify_file_context_changed)
         content.addWidget(self.file_panel)
 
-        self.shell.body_layout.addWidget(self._build_bottom_panel())
+        self.bottom_panel = self._build_bottom_panel()
+        self.shell.body_layout.addWidget(self.bottom_panel)
         self.switch_page("home")
         self._set_running(False)
         self._log_tool_health()
@@ -114,15 +125,15 @@ class MainWindow(QMainWindow):
         layout.addWidget(version)
         layout.addSpacing(14)
 
-        self._add_nav_button(layout, "home", "⌂  首页")
-        self._add_nav_button(layout, "compress", "◱  图片压缩")
-        self._add_nav_button(layout, "convert", "⇄  格式转换")
-        self._add_nav_button(layout, "resize", "⌗  批量改尺寸")
-        self._add_nav_button(layout, "super_resolution", "✦  智能媒体增强")
-        self._add_nav_button(layout, "watermark", "◇  批量加水印")
-        self._add_nav_button(layout, "rename", "Aa  批量重命名")
-        self._add_nav_button(layout, "engine_settings", "⚙  引擎设置")
-        self._add_nav_button(layout, "tool_settings", "◌  工具管理")
+        self._add_nav_button(layout, "home", "⌂", "首页")
+        self._add_nav_button(layout, "compress", "◱", "图片压缩")
+        self._add_nav_button(layout, "convert", "⇄", "格式转换")
+        self._add_nav_button(layout, "resize", "#", "批量改尺寸")
+        self._add_nav_button(layout, "super_resolution", "✦", "智能媒体增强")
+        self._add_nav_button(layout, "watermark", "◇", "批量加水印")
+        self._add_nav_button(layout, "rename", "Aa", "批量重命名")
+        self._add_nav_button(layout, "engine_settings", "⚙", "引擎设置")
+        self._add_nav_button(layout, "tool_settings", "◌", "工具管理")
         layout.addStretch()
 
         self.run_button = QPushButton("开始处理")
@@ -138,10 +149,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.cancel_button)
         return sidebar
 
-    def _add_nav_button(self, layout: QVBoxLayout, key: str, text: str) -> None:
-        button = QPushButton(text)
+    def _add_nav_button(self, layout: QVBoxLayout, key: str, icon: str, text: str) -> None:
+        button = QPushButton(f"{icon:<2}  {text}")
         button.setObjectName("NavButton")
         button.setCheckable(True)
+        button.setFixedHeight(40)
         button.clicked.connect(lambda _checked=False, page_key=key: self.switch_page(page_key))
         self.nav_buttons[key] = button
         layout.addWidget(button)
@@ -151,44 +163,6 @@ class MainWindow(QMainWindow):
         home.feature_requested.connect(self.switch_page)
         return home
 
-    def _build_bottom_panel(self) -> QWidget:
-        panel = GlassStatusBar()
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(20, 14, 20, 14)
-        layout.setSpacing(8)
-
-        header = QHBoxLayout()
-        title = QLabel("日志输出")
-        title.setObjectName("CardTitle")
-        open_output_button = QPushButton("打开输出目录")
-        open_output_button.setObjectName("GhostButton")
-        open_output_button.clicked.connect(self.open_output_dir)
-        self.retry_failed_button = QPushButton("重试失败项")
-        self.retry_failed_button.setObjectName("GhostButton")
-        self.retry_failed_button.clicked.connect(self.retry_failed_items)
-        clear_button = QPushButton("清空日志")
-        clear_button.setObjectName("GhostButton")
-        clear_button.clicked.connect(lambda: self.log_box.clear())
-        header.addWidget(title)
-        header.addStretch()
-        header.addWidget(open_output_button)
-        header.addWidget(self.retry_failed_button)
-        header.addWidget(clear_button)
-        layout.addLayout(header)
-
-        self.log_box = QTextEdit()
-        self.log_box.setReadOnly(True)
-        layout.addWidget(self.log_box)
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        layout.addWidget(self.progress_bar)
-        self.current_progress_label = QLabel("当前：未开始")
-        self.current_progress_label.setObjectName("MutedText")
-        layout.addWidget(self.current_progress_label)
-        return panel
-
     def _add_page(self, key: str, widget: QWidget) -> None:
         self.page_keys.append(key)
         self.stack.addWidget(widget)
@@ -196,14 +170,28 @@ class MainWindow(QMainWindow):
     def switch_page(self, key: str) -> None:
         if key not in self.page_keys:
             return
-        self.stack.setCurrentIndex(self.page_keys.index(key))
-        for button_key, button in self.nav_buttons.items():
-            button.setChecked(button_key == key)
-        if key == "super_resolution" and hasattr(self.features.get("super_resolution"), "refresh_from_engine_settings"):
-            self.features["super_resolution"].refresh_from_engine_settings()
-        if hasattr(self, "file_panel"):
-            self.file_panel.setVisible(key != "super_resolution")
-        self._notify_file_context_changed()
+        window_geometry = self.geometry()
+        window_state = self.windowState()
+        self.setUpdatesEnabled(False)
+        processing_pages = {"compress", "convert", "resize", "watermark", "rename"}
+        is_processing_page = key in processing_pages
+        try:
+            self.stack.setCurrentIndex(self.page_keys.index(key))
+            for button_key, button in self.nav_buttons.items():
+                button.setChecked(button_key == key)
+            self.shell.toolbar.setVisible(not is_processing_page)
+            if key == "super_resolution" and hasattr(self.features.get("super_resolution"), "refresh_from_engine_settings"):
+                self.features["super_resolution"].refresh_from_engine_settings()
+            if hasattr(self, "file_panel"):
+                self.file_panel.setVisible(is_processing_page)
+            if self.bottom_panel:
+                self.bottom_panel.setVisible(is_processing_page)
+            self._notify_file_context_changed()
+        finally:
+            self.setUpdatesEnabled(True)
+            self.setWindowState(window_state)
+            if not (window_state & (Qt.WindowMaximized | Qt.WindowFullScreen)):
+                self.setGeometry(window_geometry)
 
     def run_current_feature(self) -> None:
         if self.is_running:
@@ -224,7 +212,7 @@ class MainWindow(QMainWindow):
             self._log("请先添加要处理的文件。")
             return
 
-        self.progress_bar.setValue(0)
+        self._set_progress(0)
         if hasattr(feature, "reset_statuses"):
             feature.reset_statuses()
         else:
@@ -245,9 +233,13 @@ class MainWindow(QMainWindow):
         task.signals.log.connect(self._log)
         if hasattr(task.signals, "debug"):
             task.signals.debug.connect(self._log_debug)
-        task.signals.progress.connect(self.progress_bar.setValue)
+        task.signals.progress.connect(self._set_progress)
+        if hasattr(feature, "set_page_progress"):
+            task.signals.progress.connect(feature.set_page_progress)
         if hasattr(task.signals, "current_progress"):
             task.signals.current_progress.connect(self._set_current_progress)
+            if hasattr(feature, "set_current_progress"):
+                task.signals.current_progress.connect(feature.set_current_progress)
         if hasattr(feature, "set_file_status"):
             task.signals.file_status.connect(feature.set_file_status)
         else:
@@ -303,7 +295,7 @@ class MainWindow(QMainWindow):
         else:
             self.file_panel.clear_files()
             self.file_panel.add_files(self.last_failed_files)
-        self.progress_bar.setValue(0)
+        self._set_progress(0)
         self._start_task(self.last_failed_feature_key, f"{feature.title}（重试失败项）", self.last_failed_files, task)
 
     def open_output_dir(self) -> None:
@@ -358,10 +350,18 @@ class MainWindow(QMainWindow):
             self.cancel_button.setText("停止")
         if self.retry_failed_button:
             self.retry_failed_button.setEnabled((not is_running) and bool(self.last_failed_files))
+        if self.status_label:
+            self.status_label.setText("状态：处理中" if is_running else "状态：就绪")
 
     def _log(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_box.append(f"[{timestamp}] {message}")
+        if self.log_dialog_box:
+            self.log_dialog_box.append(f"[{timestamp}] {message}")
+        key = self.page_keys[self.stack.currentIndex()] if hasattr(self, "stack") and self.page_keys else ""
+        feature = self.features.get(key)
+        if feature and hasattr(feature, "append_log"):
+            feature.append_log(f"[{timestamp}] {message}")
 
     def _log_debug(self, message: str) -> None:
         self._log(message)
@@ -374,6 +374,100 @@ class MainWindow(QMainWindow):
                 self._log(f"检测到 {health.display_name}：{health.path}")
             else:
                 self._log(f"未检测到 {health.display_name}：请到工具管理中配置或导入。")
+
+    def _build_bottom_panel(self) -> QWidget:
+        panel = GlassStatusBar()
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(12, 4, 12, 4)
+        layout.setSpacing(10)
+
+        self.status_label = QLabel("状态：就绪")
+        self.status_label.setObjectName("MutedText")
+        layout.addWidget(self.status_label)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedWidth(180)
+        layout.addWidget(self.progress_bar)
+
+        self.progress_percent_label = QLabel("0%")
+        self.progress_percent_label.setObjectName("MutedText")
+        self.progress_percent_label.setFixedWidth(42)
+        layout.addWidget(self.progress_percent_label)
+
+        self.current_progress_label = QLabel("当前：未开始")
+        self.current_progress_label.setObjectName("MutedText")
+        layout.addWidget(self.current_progress_label, 1)
+
+        log_button = QPushButton("查看日志")
+        log_button.setObjectName("GhostButton")
+        log_button.setFixedHeight(26)
+        log_button.clicked.connect(self.show_log_dialog)
+        layout.addWidget(log_button)
+
+        self.log_box = QTextEdit(panel)
+        self.log_box.setReadOnly(True)
+        self.log_box.hide()
+        return panel
+
+    def _set_progress(self, value: int) -> None:
+        clamped_value = max(0, min(100, int(value)))
+        self.progress_bar.setValue(clamped_value)
+        if self.progress_percent_label:
+            self.progress_percent_label.setText(f"{clamped_value}%")
+
+    def _clear_log(self) -> None:
+        self.log_box.clear()
+        if self.log_dialog_box:
+            self.log_dialog_box.clear()
+
+    def show_log_dialog(self) -> None:
+        if self.log_dialog:
+            self.log_dialog.raise_()
+            self.log_dialog.activateWindow()
+            return
+        dialog = QDialog(self)
+        self.log_dialog = dialog
+        dialog.setWindowTitle("任务日志")
+        dialog.resize(760, 460)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        self.log_dialog_box = QTextEdit(dialog)
+        self.log_dialog_box.setReadOnly(True)
+        self.log_dialog_box.setPlainText(self.log_box.toPlainText())
+        layout.addWidget(self.log_dialog_box)
+
+        buttons = QHBoxLayout()
+        open_output_button = QPushButton("打开输出目录")
+        open_output_button.setObjectName("GhostButton")
+        open_output_button.clicked.connect(self.open_output_dir)
+        self.retry_failed_button = QPushButton("重试失败项")
+        self.retry_failed_button.setObjectName("GhostButton")
+        self.retry_failed_button.setEnabled((not self.is_running) and bool(self.last_failed_files))
+        self.retry_failed_button.clicked.connect(self.retry_failed_items)
+        clear_button = QPushButton("清空日志")
+        clear_button.setObjectName("GhostButton")
+        clear_button.clicked.connect(self._clear_log)
+        close_button = QPushButton("关闭")
+        close_button.clicked.connect(dialog.accept)
+        buttons.addWidget(open_output_button)
+        buttons.addWidget(self.retry_failed_button)
+        buttons.addWidget(clear_button)
+        buttons.addStretch()
+        buttons.addWidget(close_button)
+        layout.addLayout(buttons)
+
+        def reset_log_dialog(_result: int) -> None:
+            self.log_dialog = None
+            self.log_dialog_box = None
+
+        dialog.finished.connect(reset_log_dialog)
+        dialog.show()
 
     def _set_current_progress(self, message: str) -> None:
         if self.current_progress_label:

@@ -192,9 +192,12 @@ QPushButton#NavButton {{
     border: 0;
     color: #344054;
     text-align: left;
-    padding: 10px 14px;
-    border-radius: 999px;
-    min-height: 28px;
+    padding: 0 12px;
+    border-radius: 10px;
+    min-height: 40px;
+    max-height: 40px;
+    font-size: 13px;
+    font-weight: 700;
 }}
 
 QPushButton#NavButton:hover {{
@@ -381,6 +384,92 @@ QLabel#LiquidTaskHeaderText {{
 QLabel#LiquidTaskText {{
     color: #21314D;
     font-size: 13px;
+}}
+
+QWidget#SuperResolutionWorkbench {{
+    background: transparent;
+}}
+
+QFrame#SuperMainColumn {{
+    background: transparent;
+    border: 0;
+}}
+
+QFrame#SuperGlassCard,
+QFrame#SuperModeBar,
+QFrame#SuperTaskCenter,
+QFrame#SuperWorkflowBar,
+QFrame#SuperStatusBar {{
+    background: rgba(255, 255, 255, 205);
+    border: 1px solid rgba(118, 134, 159, 46);
+    border-radius: 16px;
+}}
+
+QFrame#SuperWorkflowBar {{
+    border-radius: 14px;
+}}
+
+QFrame#SuperStatusBar {{
+    border-radius: 12px;
+}}
+
+QFrame#SuperAdvancedPanel {{
+    background: rgba(245, 247, 251, 130);
+    border: 0;
+    border-radius: 12px;
+}}
+
+QLabel#SuperDropZone {{
+    background: rgba(245, 247, 251, 150);
+    border: 1px dashed rgba(118, 134, 159, 90);
+    border-radius: 14px;
+    color: #667085;
+    font-weight: 600;
+}}
+
+QTableWidget#SuperFileTable {{
+    background: rgba(255, 255, 255, 170);
+    gridline-color: rgba(118, 134, 159, 30);
+    border-radius: 12px;
+}}
+
+QHeaderView::section {{
+    background: rgba(232, 242, 255, 180);
+    border: 0;
+    border-right: 1px solid rgba(118, 134, 159, 35);
+    color: #475467;
+    font-weight: 700;
+    padding: 7px 8px;
+}}
+
+QRadioButton#TaskModeRadio {{
+    color: #344054;
+    font-weight: 700;
+    spacing: 8px;
+}}
+
+QLabel#SuperWorkflowText {{
+    color: #1D2939;
+    font-size: 13px;
+    font-weight: 700;
+}}
+
+QLabel#SuperTaskEmpty {{
+    background: rgba(245, 247, 251, 140);
+    border: 1px dashed rgba(118, 134, 159, 70);
+    border-radius: 14px;
+    color: #667085;
+    font-weight: 600;
+}}
+
+QPlainTextEdit#SuperRecentLog {{
+    background: rgba(245, 247, 251, 155);
+    border: 1px solid rgba(118, 134, 159, 45);
+    border-radius: 12px;
+    color: #344054;
+    font-family: "Cascadia Mono", "Consolas", "Microsoft YaHei UI";
+    font-size: 12px;
+    padding: 8px;
 }}
 """
 

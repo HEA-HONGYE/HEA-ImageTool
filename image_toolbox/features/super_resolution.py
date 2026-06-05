@@ -6,14 +6,21 @@ from typing import Callable
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
+    QProgressBar,
     QPushButton,
+    QRadioButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -134,66 +141,149 @@ class SuperResolutionFeature(ToolFeature):
         self.interpolation_gpu_edit: QLineEdit | None = None
         self.interpolation_tta_checkbox: QCheckBox | None = None
         self.interpolation_preview_label: QLabel | None = None
+        self.mode_buttons: dict[str, QRadioButton] = {}
+        self.upscale_advanced_panel: QWidget | None = None
+        self.interpolation_advanced_panel: QWidget | None = None
+        self.task_waiting_label: QLabel | None = None
+        self.task_running_label: QLabel | None = None
+        self.task_done_label: QLabel | None = None
+        self.task_failed_label: QLabel | None = None
+        self.recent_log_box: QPlainTextEdit | None = None
+        self.page_progress_bar: QProgressBar | None = None
+        self.page_status_label: QLabel | None = None
+        self.output_form: QFormLayout | None = None
+        self.workflow_form: QFormLayout | None = None
+        self.video_frame_dir_row: QWidget | None = None
         self._files: list[Path] = []
         self._statuses: list[str] = []
         self._selected_file: Path | None = None
+        self._recent_logs: list[str] = []
 
     def build_panel(self) -> QWidget:
         panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(10)
+        panel.setObjectName("SuperResolutionWorkbench")
+        root = QHBoxLayout(panel)
+        root.setContentsMargins(18, 18, 18, 18)
+        root.setSpacing(16)
+
+        main = QFrame()
+        main.setObjectName("SuperMainColumn")
+        main_layout = QVBoxLayout(main)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(12)
+        root.addWidget(main, 1)
 
         header = QHBoxLayout()
+        header.setSpacing(16)
         title_block = QVBoxLayout()
+        title_block.setSpacing(4)
         title = QLabel(self.title)
         title.setObjectName("PanelTitle")
-        hint = QLabel(self.description)
+        hint = QLabel("统一处理图片、动图和视频，支持 AI 超分、插帧与多种增强处理。")
         hint.setObjectName("MutedText")
         hint.setWordWrap(True)
         title_block.addWidget(title)
         title_block.addWidget(hint)
         header.addLayout(title_block, 1)
+
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("图片增强", "image")
         self.mode_combo.addItem("动图增强", "animated")
-        self.mode_combo.addItem("视频增强与 AI 插帧（预留）", "video")
-        header.addWidget(QLabel("任务类型"))
+        self.mode_combo.addItem("视频增强", "video")
+        self.mode_combo.currentIndexChanged.connect(self._on_task_mode_changed)
+        header.addWidget(QLabel("任务模式"))
         header.addWidget(self.mode_combo)
-        layout.addLayout(header)
 
-        layout.addWidget(self._build_file_area(), 3)
-        layout.addLayout(self._build_toolbar())
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItem("自定义", "")
+        for preset in UPSCALE_PRESETS:
+            self.preset_combo.addItem(preset.display_name, preset.preset_id)
+        self.preset_combo.currentIndexChanged.connect(self._apply_selected_preset)
+        header.addWidget(QLabel("预设"))
+        header.addWidget(self.preset_combo)
+        main_layout.addLayout(header)
 
-        settings_row = QHBoxLayout()
-        settings_row.setSpacing(10)
-        settings_row.addWidget(self._build_media_group(), 2)
-        settings_row.addWidget(self._build_composition_group(), 2)
-        settings_row.addWidget(self._build_output_group(), 3)
-        layout.addLayout(settings_row)
+        main_layout.addWidget(self._build_mode_bar())
+        main_layout.addWidget(self._build_file_area(), 5)
+        main_layout.addLayout(self._build_toolbar())
 
-        enhancement_row = QHBoxLayout()
-        enhancement_row.setSpacing(10)
-        enhancement_row.addWidget(self._build_upscale_group(), 3)
-        enhancement_row.addWidget(self._build_interpolation_group(), 1)
-        layout.addLayout(enhancement_row)
+        cards = QGridLayout()
+        cards.setContentsMargins(0, 0, 0, 0)
+        cards.setHorizontalSpacing(12)
+        cards.setVerticalSpacing(12)
+        cards.addWidget(self._build_upscale_group(), 0, 0)
+        cards.addWidget(self._build_interpolation_group(), 0, 1)
+        cards.addWidget(self._build_output_group(), 0, 2)
+        cards.setColumnStretch(0, 1)
+        cards.setColumnStretch(1, 1)
+        cards.setColumnStretch(2, 1)
+        main_layout.addLayout(cards)
 
-        layout.addWidget(self._build_advanced_group())
-        layout.addWidget(self._build_preview_group())
+        main_layout.addWidget(self._build_preview_group())
+        main_layout.addWidget(self._build_page_status_bar())
+        root.addWidget(self._build_task_center())
+
         self._configure_video_groups()
         self.refresh_from_engine_settings()
         self._on_video_workflow_changed()
+        self._on_task_mode_changed()
         return panel
 
+    def _glass_card(self, title: str, object_name: str = "SuperGlassCard") -> QFrame:
+        card = QFrame()
+        card.setObjectName(object_name)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(10)
+        label = QLabel(title)
+        label.setObjectName("CardTitle")
+        layout.addWidget(label)
+        return card
+
+    def _build_mode_bar(self) -> QWidget:
+        bar = QFrame()
+        bar.setObjectName("SuperModeBar")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setSpacing(16)
+        layout.addWidget(QLabel("任务模式"))
+        group = QButtonGroup(bar)
+        for label, key in [("图片增强", "image"), ("动图增强", "animated"), ("视频增强", "video")]:
+            button = QRadioButton(label)
+            button.setObjectName("TaskModeRadio")
+            button.toggled.connect(lambda checked, mode=key: checked and self._set_task_mode(mode))
+            self.mode_buttons[key] = button
+            group.addButton(button)
+            layout.addWidget(button)
+        self.mode_buttons["image"].setChecked(True)
+        layout.addStretch()
+        return bar
+
     def _build_file_area(self) -> QWidget:
-        group = QGroupBox("文件列表")
-        layout = QVBoxLayout(group)
+        group = self._glass_card("文件区域")
+        layout = group.layout()
+        if not isinstance(layout, QVBoxLayout):
+            layout = QVBoxLayout(group)
+        drop = QLabel("拖拽文件或文件夹到这里，或点击下方按钮添加\n支持图片（JPG/PNG/WebP）、动图（GIF/APNG/WebP）和视频（MP4/MKV 等）")
+        drop.setObjectName("SuperDropZone")
+        drop.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        drop.setMinimumHeight(74)
+        layout.addWidget(drop)
+
         self.file_table = QTableWidget(0, 6)
-        self.file_table.setHorizontalHeaderLabels(["文件名", "类型", "状态", "完整路径", "原始尺寸", "预计输出尺寸"])
+        self.file_table.setObjectName("SuperFileTable")
+        self.file_table.setHorizontalHeaderLabels(["文件名", "类型", "状态", "尺寸", "预计输出", "完整路径"])
         self.file_table.verticalHeader().setVisible(False)
         self.file_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.file_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.file_table.currentCellChanged.connect(lambda row, *_args: self._select_row(row))
+        self.file_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.file_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.file_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.file_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.file_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.file_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        self.file_table.setMinimumHeight(260)
         layout.addWidget(self.file_table)
         return group
 
@@ -202,33 +292,24 @@ class SuperResolutionFeature(ToolFeature):
         self.file_count_label = QLabel("文件数量：0")
         self.file_count_label.setObjectName("CardTitle")
         add_button = QPushButton("添加文件")
+        add_folder_button = QPushButton("添加文件夹")
         remove_button = QPushButton("删除选中")
         clear_button = QPushButton("清空")
         open_output_button = QPushButton("打开输出目录")
         clear_cache_button = QPushButton("清理媒体缓存")
         add_button.clicked.connect(self.choose_files)
+        add_folder_button.clicked.connect(self._choose_folder)
         remove_button.clicked.connect(self.remove_selected_file)
         clear_button.clicked.connect(self.clear_files)
         open_output_button.clicked.connect(self._open_output_from_page)
         clear_cache_button.clicked.connect(self._clear_media_cache_from_page)
-        for button in [remove_button, clear_button, open_output_button, clear_cache_button]:
+        for button in [add_folder_button, remove_button, clear_button, open_output_button, clear_cache_button]:
             button.setObjectName("GhostButton")
         row.addWidget(self.file_count_label)
         row.addWidget(add_button)
+        row.addWidget(add_folder_button)
         row.addWidget(remove_button)
         row.addWidget(clear_button)
-        row.addSpacing(16)
-        row.addWidget(QLabel("快捷预设"))
-        self.preset_combo = QComboBox()
-        self.preset_combo.addItem("自定义", "")
-        for preset in UPSCALE_PRESETS:
-            self.preset_combo.addItem(preset.display_name, preset.preset_id)
-        self.preset_combo.currentIndexChanged.connect(self._apply_selected_preset)
-        row.addWidget(self.preset_combo, 1)
-        row.addWidget(QLabel("引擎"))
-        self.engine_combo = QComboBox()
-        self.engine_combo.currentIndexChanged.connect(self._on_engine_changed)
-        row.addWidget(self.engine_combo, 1)
         row.addStretch()
         row.addWidget(clear_cache_button)
         row.addWidget(open_output_button)
@@ -309,81 +390,134 @@ class SuperResolutionFeature(ToolFeature):
         return group
 
     def _build_output_group(self) -> QWidget:
-        group = QGroupBox("输出文件夹")
+        group = self._glass_card("输出设置")
         self.output_group = group
-        form = QFormLayout(group)
+        form = QFormLayout()
+        self.output_form = form
+        group.layout().addLayout(form)
         self.output_edit = QLineEdit(self.config.get("output_dir", str(Path.cwd() / "output")))
         browse_button = QPushButton("选择")
+        browse_button.setObjectName("GhostButton")
         browse_button.clicked.connect(self._choose_output)
         output_row = QHBoxLayout()
         output_row.addWidget(self.output_edit)
         output_row.addWidget(browse_button)
-        form.addRow("输出到", output_row)
+        form.addRow("输出目录", output_row)
+        self.format_combo = QComboBox()
+        self.format_combo.currentIndexChanged.connect(self._on_format_changed)
+        form.addRow("图片格式", self.format_combo)
+        self.quality_spin = QSpinBox()
+        self.quality_spin.setRange(1, 100)
+        self.quality_spin.setValue(self.config.get("quality", 95, int))
+        self.quality_spin.valueChanged.connect(self._refresh_preview)
+        form.addRow("图片质量", self.quality_spin)
+        self.animated_format_combo = QComboBox()
+        self.animated_format_combo.addItem("GIF", "gif")
+        self.animated_format_combo.addItem("WebP", "webp")
+        self.animated_format_combo.addItem("APNG", "apng")
+        self.animated_format_combo.setCurrentIndex(max(0, self.animated_format_combo.findData(self.config.get("animated_output_format", "gif", str))))
+        self.animated_format_combo.currentIndexChanged.connect(self._refresh_preview)
+        form.addRow("动图格式", self.animated_format_combo)
+        self.animated_fps_spin = QDoubleSpinBox()
+        self.animated_fps_spin.setRange(0, 120)
+        self.animated_fps_spin.setDecimals(3)
+        self.animated_fps_spin.setSingleStep(1)
+        self.animated_fps_spin.setValue(self.config.get("animated_output_fps", 0.0, float))
+        self.animated_fps_spin.setToolTip("0 表示保留原始帧延迟。")
+        self.animated_fps_spin.valueChanged.connect(self._refresh_preview)
+        form.addRow("动图 FPS", self.animated_fps_spin)
+        self.video_fps_spin = QDoubleSpinBox()
+        self.video_fps_spin.setRange(0, 240)
+        self.video_fps_spin.setDecimals(3)
+        self.video_fps_spin.setSingleStep(1)
+        self.video_fps_spin.setValue(self.config.get("video_output_fps", 0.0, float))
+        self.video_fps_spin.setToolTip("0 表示自动：仅超分保持原 FPS，插帧按倍率提升 FPS。")
+        self.video_fps_spin.valueChanged.connect(self._refresh_preview)
+        form.addRow("视频 FPS", self.video_fps_spin)
         self.conflict_combo = QComboBox()
         self.conflict_combo.addItem("自动重命名", "rename")
         self.conflict_combo.addItem("跳过", "skip")
         self.conflict_combo.addItem("覆盖", "overwrite")
         self.conflict_combo.setCurrentIndex(max(0, self.conflict_combo.findData(self.config.get("conflict_strategy", "rename"))))
-        form.addRow("文件已存在", self.conflict_combo)
-        keep_name = QCheckBox("保留原文件名")
-        keep_name.setEnabled(False)
-        auto_folder = QCheckBox("自动创建输出文件夹")
-        auto_folder.setChecked(True)
+        form.addRow("覆盖策略", self.conflict_combo)
+        self.keep_audio_checkbox = QCheckBox("保留音频")
+        self.keep_audio_checkbox.setChecked(self.config.get("keep_audio", True, bool))
+        form.addRow("音频", self.keep_audio_checkbox)
+        self.keep_temp_checkbox = QCheckBox("保留临时文件")
+        self.keep_temp_checkbox.setChecked(self.config.get("keep_temp", False, bool))
+        form.addRow("临时文件", self.keep_temp_checkbox)
+        self.preserve_loop_checkbox = QCheckBox("保留动图循环次数")
+        self.preserve_loop_checkbox.setChecked(self.config.get("animated_preserve_loop", True, bool))
+        form.addRow("动图循环", self.preserve_loop_checkbox)
         open_output_button = QPushButton("打开输出目录")
         open_output_button.setObjectName("GhostButton")
         open_output_button.clicked.connect(self._open_output_from_page)
-        form.addRow("命名", keep_name)
-        form.addRow("目录", auto_folder)
         form.addRow("快捷操作", open_output_button)
         return group
 
     def _build_upscale_group(self) -> QWidget:
-        group = QGroupBox("超分设置")
+        group = self._glass_card("超分设置")
         self.upscale_group = group
-        form = QFormLayout(group)
+        form = QFormLayout()
+        group.layout().addLayout(form)
         self.upscale_enabled_checkbox = QCheckBox("启用超分 / 图片增强")
         self.upscale_enabled_checkbox.setChecked(self.config.get("upscale_enabled", True, bool))
         self.upscale_enabled_checkbox.stateChanged.connect(self._refresh_preview)
-        form.addRow("开关", self.upscale_enabled_checkbox)
-        self.engine_info_label = QLabel("")
-        self.engine_info_label.setObjectName("MutedText")
-        self.engine_info_label.setWordWrap(True)
-        form.addRow("引擎状态", self.engine_info_label)
+        form.addRow("", self.upscale_enabled_checkbox)
+        self.engine_combo = QComboBox()
+        self.engine_combo.currentIndexChanged.connect(self._on_engine_changed)
+        form.addRow("超分引擎", self.engine_combo)
         self.model_combo = QComboBox()
         form.addRow("模型", self.model_combo)
         self.scale_combo = QComboBox()
         self.scale_combo.currentIndexChanged.connect(self._refresh_preview)
-        form.addRow("放大倍率", self.scale_combo)
+        form.addRow("倍率", self.scale_combo)
         self.noise_combo = QComboBox()
-        form.addRow("降噪等级", self.noise_combo)
-        self.syncgap_combo = QComboBox()
-        form.addRow("SyncGap", self.syncgap_combo)
+        form.addRow("降噪", self.noise_combo)
+        self.low_memory_checkbox = QCheckBox("低显存")
+        self.low_memory_checkbox.stateChanged.connect(self._refresh_preview)
+        form.addRow("", self.low_memory_checkbox)
+
+        advanced_button = QPushButton("高级设置 ▼")
+        advanced_button.setObjectName("GhostButton")
+        self.upscale_advanced_panel = QFrame()
+        self.upscale_advanced_panel.setObjectName("SuperAdvancedPanel")
+        advanced_form = QFormLayout(self.upscale_advanced_panel)
+        advanced_form.setContentsMargins(0, 8, 0, 0)
         self.tile_spin = QSpinBox()
         self.tile_spin.setRange(0, 2048)
         self.tile_spin.setSingleStep(32)
         self.tile_spin.setValue(self.config.get("tile_size", 0, int))
         self.tile_spin.valueChanged.connect(self._refresh_preview)
-        form.addRow("Tile / 0 自动", self.tile_spin)
-        self.low_memory_checkbox = QCheckBox("低显存模式：速度较慢，但更稳定")
-        self.low_memory_checkbox.stateChanged.connect(self._refresh_preview)
-        form.addRow("稳定性", self.low_memory_checkbox)
+        advanced_form.addRow("Tile", self.tile_spin)
         self.gpu_edit = QLineEdit(self.config.get("gpu_id", "auto"))
-        form.addRow("GPU", self.gpu_edit)
-        self.threads_edit = QLineEdit(self.config.get("threads", "1:2:2"))
-        form.addRow("线程", self.threads_edit)
+        advanced_form.addRow("GPU", self.gpu_edit)
         self.tta_checkbox = QCheckBox("启用 TTA 增强，速度会更慢")
         self.tta_checkbox.setChecked(self.config.get("use_tta", False, bool))
-        form.addRow("增强", self.tta_checkbox)
+        advanced_form.addRow("TTA", self.tta_checkbox)
+        self.threads_edit = QLineEdit(self.config.get("threads", "1:2:2"))
+        advanced_form.addRow("线程", self.threads_edit)
+        self.syncgap_combo = QComboBox()
+        advanced_form.addRow("SyncGap", self.syncgap_combo)
+        self.upscale_advanced_panel.setVisible(False)
+        advanced_button.clicked.connect(lambda: self._toggle_advanced(self.upscale_advanced_panel, advanced_button))
+        group.layout().addWidget(advanced_button)
+        group.layout().addWidget(self.upscale_advanced_panel)
+        self.engine_info_label = QLabel("")
+        self.engine_info_label.setObjectName("MutedText")
+        self.engine_info_label.setWordWrap(True)
+        group.layout().addWidget(self.engine_info_label)
         return group
 
     def _build_interpolation_group(self) -> QWidget:
-        group = QGroupBox("插帧设置")
+        group = self._glass_card("插帧设置")
         self.interpolation_group = group
-        form = QFormLayout(group)
+        form = QFormLayout()
+        group.layout().addLayout(form)
         self.interpolation_enabled_checkbox = QCheckBox("启用插帧")
         self.interpolation_enabled_checkbox.setChecked(self.config.get("interpolation_enabled", False, bool))
         self.interpolation_enabled_checkbox.stateChanged.connect(self._on_interpolation_changed)
-        form.addRow("开关", self.interpolation_enabled_checkbox)
+        form.addRow("", self.interpolation_enabled_checkbox)
         self.interpolation_engine_combo = QComboBox()
         self.interpolation_engine_combo.addItem("RIFE", "rife")
         self.interpolation_engine_combo.addItem("IFRNet", "ifrnet")
@@ -402,15 +536,26 @@ class SuperResolutionFeature(ToolFeature):
         self._refresh_interpolation_models()
         self.interpolation_model_combo.currentIndexChanged.connect(self._refresh_preview)
         form.addRow("模型", self.interpolation_model_combo)
+
+        advanced_button = QPushButton("高级设置 ▼")
+        advanced_button.setObjectName("GhostButton")
+        self.interpolation_advanced_panel = QFrame()
+        self.interpolation_advanced_panel.setObjectName("SuperAdvancedPanel")
+        advanced_form = QFormLayout(self.interpolation_advanced_panel)
+        advanced_form.setContentsMargins(0, 8, 0, 0)
         self.interpolation_gpu_edit = QLineEdit(self.config.get("interpolation_gpu_id", "auto"))
-        form.addRow("GPU ID", self.interpolation_gpu_edit)
+        advanced_form.addRow("GPU", self.interpolation_gpu_edit)
         self.interpolation_tta_checkbox = QCheckBox("启用 TTA（如果当前插帧引擎支持）")
         self.interpolation_tta_checkbox.setChecked(self.config.get("interpolation_tta", False, bool))
-        form.addRow("TTA", self.interpolation_tta_checkbox)
+        advanced_form.addRow("TTA", self.interpolation_tta_checkbox)
         self.interpolation_preview_label = QLabel("输出 FPS：自动")
         self.interpolation_preview_label.setObjectName("MutedText")
         self.interpolation_preview_label.setWordWrap(True)
-        form.addRow("预览", self.interpolation_preview_label)
+        advanced_form.addRow("引擎参数", self.interpolation_preview_label)
+        self.interpolation_advanced_panel.setVisible(False)
+        advanced_button.clicked.connect(lambda: self._toggle_advanced(self.interpolation_advanced_panel, advanced_button))
+        group.layout().addWidget(advanced_button)
+        group.layout().addWidget(self.interpolation_advanced_panel)
         self._on_interpolation_changed()
         return group
 
@@ -463,8 +608,15 @@ class SuperResolutionFeature(ToolFeature):
         return VIDEO_WORKFLOW_LABELS.get(self._video_workflow_mode(), self._video_workflow_mode())
 
     def _workflow_preview_text(self) -> str:
+        mode = self.mode_combo.currentData() if self.mode_combo else "image"
+        if mode == "animated":
+            return "工作流：GIF/WebP/APNG → 拆帧 → 超分 → 合成"
+        if mode == "image":
+            return "工作流：图片 → 超分 → 输出"
         steps = VIDEO_WORKFLOW_STEPS.get(self._video_workflow_mode(), [])
-        return "工作流预览：\n" + "\n↓\n".join(steps) if steps else "工作流预览：未知"
+        if steps:
+            return "工作流：" + " → ".join(steps)
+        return "工作流：视频 → 拆帧 → 超分 → 插帧 → 合成"
 
     def _configure_video_groups(self) -> None:
         for group in [
@@ -477,17 +629,12 @@ class SuperResolutionFeature(ToolFeature):
         ]:
             if not group:
                 continue
-            group.setStyleSheet("QGroupBox::title { font-weight: 600; }")
-            group.setCheckable(True)
-            group.toggled.connect(lambda checked, current_group=group: self._set_group_content_visible(current_group, checked))
-            group.setChecked(True)
-            self._set_group_content_visible(group, True)
-        if self.workflow_group:
-            self.workflow_group.setCheckable(False)
-        if self.output_group:
-            self.output_group.setChecked(True)
-        if self.advanced_group:
-            self._set_group_expanded(self.advanced_group, False, True)
+            if hasattr(group, "setCheckable"):
+                group.setStyleSheet("QGroupBox::title { font-weight: 600; }")
+                group.setCheckable(True)
+                group.toggled.connect(lambda checked, current_group=group: self._set_group_content_visible(current_group, checked))
+                group.setChecked(True)
+                self._set_group_content_visible(group, True)
 
     def _set_group_content_visible(self, group: QGroupBox, visible: bool) -> None:
         for child in group.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
@@ -495,6 +642,11 @@ class SuperResolutionFeature(ToolFeature):
 
     def _set_group_expanded(self, group: QGroupBox | None, expanded: bool, enabled: bool = True, tooltip: str = "") -> None:
         if not group:
+            return
+        if not hasattr(group, "setChecked"):
+            group.setVisible(expanded)
+            group.setEnabled(enabled)
+            group.setToolTip("" if enabled else tooltip)
             return
         group.blockSignals(True)
         group.setChecked(expanded)
@@ -627,10 +779,11 @@ class SuperResolutionFeature(ToolFeature):
             self._refresh_preview()
 
     def _build_preview_group(self) -> QWidget:
-        group = QGroupBox("工作流")
+        group = self._glass_card("工作流预览", "SuperWorkflowBar")
         self.workflow_group = group
-        layout = QVBoxLayout(group)
+        layout = group.layout()
         workflow_form = QFormLayout()
+        self.workflow_form = workflow_form
         self.video_workflow_combo = QComboBox()
         self.video_workflow_combo.addItem("先超分后插帧", "upscale_then_interpolate")
         self.video_workflow_combo.addItem("仅超分", "upscale_only")
@@ -640,18 +793,21 @@ class SuperResolutionFeature(ToolFeature):
         self.video_workflow_combo.addItem("仅合成", "encode_only")
         self.video_workflow_combo.setCurrentIndex(max(0, self.video_workflow_combo.findData(self.config.get("video_workflow_mode", "upscale_then_interpolate", str))))
         self.video_workflow_combo.currentIndexChanged.connect(self._on_video_workflow_changed)
-        workflow_form.addRow("视频处理模式", self.video_workflow_combo)
+        workflow_form.addRow("视频流程", self.video_workflow_combo)
         self.video_frame_dir_edit = QLineEdit(self.config.get("video_input_frame_dir", "", str))
         frame_dir_button = QPushButton("选择帧目录")
+        frame_dir_button.setObjectName("GhostButton")
         frame_dir_button.clicked.connect(self._choose_video_frame_dir)
-        frame_dir_row = QHBoxLayout()
+        self.video_frame_dir_row = QWidget()
+        frame_dir_row = QHBoxLayout(self.video_frame_dir_row)
+        frame_dir_row.setContentsMargins(0, 0, 0, 0)
         frame_dir_row.addWidget(self.video_frame_dir_edit)
         frame_dir_row.addWidget(frame_dir_button)
-        workflow_form.addRow("仅合成帧目录", frame_dir_row)
+        workflow_form.addRow("仅合成帧目录", self.video_frame_dir_row)
         layout.addLayout(workflow_form)
         self.workflow_preview_label = QLabel("")
-        self.workflow_preview_label.setObjectName("MutedText")
-        self.workflow_preview_label.setWordWrap(True)
+        self.workflow_preview_label.setObjectName("SuperWorkflowText")
+        self.workflow_preview_label.setWordWrap(False)
         self.task_summary_label = QLabel("")
         self.task_summary_label.setObjectName("MutedText")
         self.task_summary_label.setWordWrap(True)
@@ -662,10 +818,155 @@ class SuperResolutionFeature(ToolFeature):
         self.output_info_label.setObjectName("MutedText")
         self.output_info_label.setWordWrap(True)
         layout.addWidget(self.workflow_preview_label)
-        layout.addWidget(self.task_summary_label)
-        layout.addWidget(self.size_label)
-        layout.addWidget(self.output_info_label)
+        self.task_summary_label.setVisible(False)
+        self.size_label.setVisible(False)
+        self.output_info_label.setVisible(False)
         return group
+
+    def _build_task_center(self) -> QWidget:
+        center = QFrame()
+        center.setObjectName("SuperTaskCenter")
+        center.setFixedWidth(330)
+        layout = QVBoxLayout(center)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+
+        title = QLabel("任务中心")
+        title.setObjectName("CardTitle")
+        layout.addWidget(title)
+
+        stats = QGridLayout()
+        stats.setHorizontalSpacing(8)
+        stats.setVerticalSpacing(8)
+        self.task_waiting_label = self._task_stat("等待中 0")
+        self.task_running_label = self._task_stat("处理中 0")
+        self.task_done_label = self._task_stat("完成 0")
+        self.task_failed_label = self._task_stat("失败 0")
+        stats.addWidget(self.task_waiting_label, 0, 0)
+        stats.addWidget(self.task_running_label, 0, 1)
+        stats.addWidget(self.task_done_label, 1, 0)
+        stats.addWidget(self.task_failed_label, 1, 1)
+        layout.addLayout(stats)
+
+        empty = QLabel("暂无任务\n添加文件后点击开始处理")
+        empty.setObjectName("SuperTaskEmpty")
+        empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty.setMinimumHeight(150)
+        layout.addWidget(empty)
+
+        log_title = QLabel("实时日志")
+        log_title.setObjectName("CardTitle")
+        layout.addWidget(log_title)
+        self.recent_log_box = QPlainTextEdit()
+        self.recent_log_box.setObjectName("SuperRecentLog")
+        self.recent_log_box.setReadOnly(True)
+        self.recent_log_box.setMaximumBlockCount(80)
+        layout.addWidget(self.recent_log_box, 1)
+
+        actions = QVBoxLayout()
+        expand_button = QPushButton("展开日志")
+        open_log_button = QPushButton("打开日志目录")
+        retry_button = QPushButton("重试失败任务")
+        for button in [expand_button, open_log_button, retry_button]:
+            button.setObjectName("GhostButton")
+            actions.addWidget(button)
+        open_log_button.clicked.connect(self._open_log_dir_from_page)
+        retry_button.setEnabled(False)
+        expand_button.clicked.connect(lambda: self.recent_log_box.setMaximumHeight(420) if self.recent_log_box else None)
+        layout.addLayout(actions)
+        return center
+
+    def _task_stat(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("QueueStatPill")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        return label
+
+    def _build_page_status_bar(self) -> QWidget:
+        bar = QFrame()
+        bar.setObjectName("SuperStatusBar")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(12, 4, 12, 4)
+        layout.setSpacing(12)
+        self.page_status_label = QLabel("就绪｜0%｜无当前任务｜剩余 --:--｜临时空间估算中")
+        self.page_status_label.setObjectName("MutedText")
+        self.page_progress_bar = QProgressBar()
+        self.page_progress_bar.setRange(0, 100)
+        self.page_progress_bar.setValue(0)
+        self.page_progress_bar.setTextVisible(False)
+        self.page_progress_bar.setFixedHeight(8)
+        layout.addWidget(self.page_status_label, 1)
+        layout.addWidget(self.page_progress_bar, 1)
+        bar.setFixedHeight(32)
+        return bar
+
+    def _toggle_advanced(self, panel: QWidget | None, button: QPushButton) -> None:
+        if not panel:
+            return
+        visible = not panel.isVisible()
+        panel.setVisible(visible)
+        button.setText("高级设置 ▲" if visible else "高级设置 ▼")
+
+    def _set_task_mode(self, mode: str) -> None:
+        if self.mode_combo:
+            index = self.mode_combo.findData(mode)
+            if index >= 0 and self.mode_combo.currentIndex() != index:
+                self.mode_combo.setCurrentIndex(index)
+
+    def _on_task_mode_changed(self, *_args: object) -> None:
+        mode = self.mode_combo.currentData() if self.mode_combo else "image"
+        for key, button in self.mode_buttons.items():
+            button.blockSignals(True)
+            button.setChecked(key == mode)
+            button.blockSignals(False)
+        if self.upscale_group:
+            self.upscale_group.setVisible(mode in {"image", "animated", "video"})
+        if self.interpolation_group:
+            self.interpolation_group.setVisible(mode == "video")
+        if self.animated_format_combo:
+            self._set_form_field_visible(self.output_form, self.animated_format_combo, mode == "animated")
+        if self.animated_fps_spin:
+            self._set_form_field_visible(self.output_form, self.animated_fps_spin, mode == "animated")
+        if self.preserve_loop_checkbox:
+            self._set_form_field_visible(self.output_form, self.preserve_loop_checkbox, mode == "animated")
+        if self.keep_audio_checkbox:
+            self._set_form_field_visible(self.output_form, self.keep_audio_checkbox, mode == "video")
+        if self.video_fps_spin:
+            self._set_form_field_visible(self.output_form, self.video_fps_spin, mode == "video")
+        if self.video_workflow_combo:
+            self._set_form_field_visible(self.workflow_form, self.video_workflow_combo, mode == "video")
+        if self.video_frame_dir_row:
+            self._set_form_field_visible(self.workflow_form, self.video_frame_dir_row, mode == "video")
+        self._refresh_preview()
+
+    def _set_form_field_visible(self, form: QFormLayout | None, field: QWidget | None, visible: bool) -> None:
+        if not field:
+            return
+        field.setVisible(visible)
+        if form:
+            label = form.labelForField(field)
+            if label:
+                label.setVisible(visible)
+
+    def append_log(self, message: str) -> None:
+        self._recent_logs.append(message)
+        self._recent_logs = self._recent_logs[-80:]
+        if self.recent_log_box:
+            self.recent_log_box.setPlainText("\n".join(self._recent_logs[-12:]))
+            self.recent_log_box.verticalScrollBar().setValue(self.recent_log_box.verticalScrollBar().maximum())
+
+    def set_page_progress(self, value: int) -> None:
+        if self.page_progress_bar:
+            self.page_progress_bar.setValue(value)
+        if self.page_status_label:
+            selected = self._selected_file.name if self._selected_file else "无当前任务"
+            state = "处理中" if value and value < 100 else ("完成" if value >= 100 else "就绪")
+            self.page_status_label.setText(f"{state}｜{value}%｜{selected}｜剩余 --:--｜临时空间估算中")
+
+    def set_current_progress(self, message: str) -> None:
+        if self.page_status_label:
+            value = self.page_progress_bar.value() if self.page_progress_bar else 0
+            self.page_status_label.setText(f"处理中｜{value}%｜{message}｜剩余 --:--｜临时空间估算中")
 
     def choose_files(self) -> None:
         selected, _ = QFileDialog.getOpenFileNames(
@@ -675,6 +976,14 @@ class SuperResolutionFeature(ToolFeature):
             "Media Files (*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff *.gif *.apng *.mp4 *.mov *.mkv *.avi *.webm *.m4v)",
         )
         self.add_files([Path(item) for item in selected])
+
+    def _choose_folder(self) -> None:
+        directory = QFileDialog.getExistingDirectory(None, "选择媒体文件夹", str(Path.cwd()))
+        if not directory:
+            return
+        root = Path(directory)
+        supported = IMAGE_EXTENSIONS | ANIMATED_EXTENSIONS | VIDEO_EXTENSIONS
+        self.add_files([path for path in root.rglob("*") if path.suffix.lower() in supported])
 
     def add_files(self, paths: list[Path]) -> None:
         existing = {path.resolve() for path in self._files}
@@ -728,16 +1037,30 @@ class SuperResolutionFeature(ToolFeature):
             media_type = self._media_type(path)
             original_size = self._read_size_text(path)
             output_size = self._output_size_text(path, scale)
-            values = [path.name, media_type, self._statuses[row], str(path), original_size, output_size]
+            values = [path.name, media_type, self._statuses[row], original_size, output_size, str(path)]
             for col, value in enumerate(values):
                 self.file_table.setItem(row, col, QTableWidgetItem(value))
-        self.file_table.resizeColumnsToContents()
         if self._files:
             self.file_table.setCurrentCell(max(0, min(current, len(self._files) - 1)), 0)
         if self.file_count_label:
             self.file_count_label.setText(f"文件数量：{len(self._files)}")
+        self._refresh_task_center_stats()
         self._selected_file = self._files[self.file_table.currentRow()] if self._files and self.file_table.currentRow() >= 0 else (self._files[0] if self._files else None)
         self._update_preview()
+
+    def _refresh_task_center_stats(self) -> None:
+        waiting = sum(1 for status in self._statuses if "待" in status or "等待" in status)
+        running = sum(1 for status in self._statuses if "处理" in status or "运行" in status)
+        done = sum(1 for status in self._statuses if "完成" in status or "成功" in status)
+        failed = sum(1 for status in self._statuses if "失败" in status or "错误" in status)
+        if self.task_waiting_label:
+            self.task_waiting_label.setText(f"等待中 {waiting}")
+        if self.task_running_label:
+            self.task_running_label.setText(f"处理中 {running}")
+        if self.task_done_label:
+            self.task_done_label.setText(f"完成 {done}")
+        if self.task_failed_label:
+            self.task_failed_label.setText(f"失败 {failed}")
 
     def _select_row(self, row: int) -> None:
         if 0 <= row < len(self._files):
@@ -971,6 +1294,11 @@ class SuperResolutionFeature(ToolFeature):
         output_dir = self.get_output_dir() or Path.cwd() / "output"
         output_dir.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_dir.resolve())))
+
+    def _open_log_dir_from_page(self) -> None:
+        log_dir = Path.cwd() / "reports"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir.resolve())))
 
     def _clear_media_cache_from_page(self) -> None:
         removed, released = clear_media_task_cache()

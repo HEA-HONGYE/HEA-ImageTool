@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -456,7 +457,9 @@ class EngineSettingsPanel(QWidget):
 
     def _build_bottom_bar(self) -> QWidget:
         group = QGroupBox("线程数量与 GPU 设置")
-        row = QHBoxLayout(group)
+        grid = QGridLayout(group)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(10)
         self.image_threads_spin = QSpinBox()
         self.image_threads_spin.setRange(1, 64)
         self.image_threads_spin.setValue(self.store.global_settings.image_threads)
@@ -484,22 +487,25 @@ class EngineSettingsPanel(QWidget):
         save.clicked.connect(self.save_settings)
         self.status_label = QLabel(f"配置文件：{self.store.path}")
         self.status_label.setObjectName("MutedText")
-        row.addWidget(QLabel("图片线程"))
-        row.addWidget(self.image_threads_spin)
-        row.addWidget(QLabel("动态图片线程"))
-        row.addWidget(self.animated_threads_spin)
-        row.addWidget(QLabel("视频线程"))
-        row.addWidget(self.video_threads_spin)
-        row.addWidget(QLabel("GPU ID"))
-        row.addWidget(self.gpu_id_edit)
-        row.addWidget(gpu_button)
-        row.addWidget(self.multi_gpu_checkbox)
-        row.addWidget(QLabel("多显卡 ID"))
-        row.addWidget(self.multi_gpu_id_edit)
-        row.addWidget(QLabel("块大小"))
-        row.addWidget(self.multi_gpu_tile_spin)
-        row.addStretch()
-        row.addWidget(save)
+        self.gpu_id_edit.setMinimumWidth(140)
+        self.multi_gpu_id_edit.setMinimumWidth(80)
+        grid.addWidget(QLabel("图片线程"), 0, 0)
+        grid.addWidget(self.image_threads_spin, 0, 1)
+        grid.addWidget(QLabel("动态图片线程"), 0, 2)
+        grid.addWidget(self.animated_threads_spin, 0, 3)
+        grid.addWidget(QLabel("视频线程"), 0, 4)
+        grid.addWidget(self.video_threads_spin, 0, 5)
+        grid.addWidget(QLabel("GPU ID"), 1, 0)
+        grid.addWidget(self.gpu_id_edit, 1, 1, 1, 2)
+        grid.addWidget(gpu_button, 1, 3)
+        grid.addWidget(self.multi_gpu_checkbox, 1, 4)
+        grid.addWidget(QLabel("多显卡 ID"), 1, 5)
+        grid.addWidget(self.multi_gpu_id_edit, 1, 6)
+        grid.addWidget(QLabel("块大小"), 1, 7)
+        grid.addWidget(self.multi_gpu_tile_spin, 1, 8)
+        grid.addWidget(save, 0, 8)
+        grid.setColumnStretch(2, 1)
+        grid.setColumnStretch(6, 1)
         return group
 
     def _path_row(self, edit: QLineEdit, mode: str) -> QWidget:

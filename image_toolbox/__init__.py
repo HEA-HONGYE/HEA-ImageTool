@@ -1,4 +1,4 @@
 """Desktop image toolbox."""
 
 APP_NAME = "HEA"
-APP_VERSION = "4.0.1"
+APP_VERSION = "4.1.0"
