@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QThreadPool, QUrl
+from PySide6.QtCore import QPoint, QSize, Qt, QThreadPool, QUrl
 from PySide6.QtGui import QCloseEvent, QDesktopServices
-from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton, QStackedWidget, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QDialog, QFrame, QGroupBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea, QStackedWidget, QTextEdit, QVBoxLayout, QWidget
 
 from image_toolbox import APP_NAME, APP_VERSION
 from image_toolbox.core.super_resolution import SuperResolutionSummary
@@ -25,8 +25,156 @@ from image_toolbox.ui.widgets import AppShell, GlassSidebar, GlassStatusBar
 
 
 class StableStackedWidget(QStackedWidget):
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(0, 0)
+
     def minimumSizeHint(self) -> QSize:  # noqa: N802
         return QSize(0, 0)
+
+
+class CompactScrollArea(QScrollArea):
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(0, 0)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(0, 0)
+
+
+class SettingsContentPage(QWidget):
+    def __init__(self, panel: QWidget) -> None:
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.panel = panel
+        self.scroll_area = CompactScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setWidget(panel)
+        layout.addWidget(self.scroll_area)
+
+    def scroll_to_group(self, title: str | None) -> None:
+        if not title:
+            self.scroll_area.verticalScrollBar().setValue(0)
+            return
+        for group in self.panel.findChildren(QGroupBox):
+            if title == group.title() or title in group.title():
+                position = group.mapTo(self.panel, QPoint(0, 0)).y()
+                self.scroll_area.verticalScrollBar().setValue(max(0, position - 12))
+                return
+        self.scroll_area.verticalScrollBar().setValue(0)
+
+
+class SettingsDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("AppShell")
+        self.setWindowTitle("设置")
+        self.setWindowFlag(Qt.Window, True)
+        self.setMinimumSize(760, 520)
+        self.resize(980, 640)
+        self.nav_buttons: dict[str, QPushButton] = {}
+        self._centered_once = False
+
+        root = QHBoxLayout(self)
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(14)
+
+        sidebar = GlassSidebar()
+        sidebar.setFixedWidth(230)
+        side_layout = QVBoxLayout(sidebar)
+        side_layout.setContentsMargins(16, 18, 16, 18)
+        side_layout.setSpacing(6)
+
+        title = QLabel("设置")
+        title.setObjectName("CardTitle")
+        hint = QLabel("引擎与工具")
+        hint.setObjectName("MutedText")
+        side_layout.addWidget(title)
+        side_layout.addWidget(hint)
+        side_layout.addSpacing(12)
+
+        self.stack = StableStackedWidget()
+        self.page_keys: list[str] = []
+        self._add_settings_page("engine_base", EngineSettingsPanel("base"))
+        self._add_settings_page("engine_image", EngineSettingsPanel("image"))
+        self._add_settings_page("engine_video", EngineSettingsPanel("video"))
+        self._add_settings_page("tool_settings", SettingsContentPage(ToolSettingsPanel()))
+
+        self._add_nav_group_label(side_layout, "引擎设置")
+        self._add_settings_nav(side_layout, "engine_base", "基础配置")
+        self._add_settings_nav(side_layout, "engine_image", "图片超分引擎")
+        self._add_settings_nav(side_layout, "engine_video", "视频插帧引擎")
+        side_layout.addSpacing(8)
+        self._add_nav_group_label(side_layout, "工具管理")
+        self._add_settings_nav(side_layout, "tool_settings", "工具管理")
+        side_layout.addStretch()
+
+        close_button = QPushButton("关闭")
+        close_button.setObjectName("GhostButton")
+        close_button.clicked.connect(self.accept)
+        side_layout.addWidget(close_button)
+
+        root.addWidget(sidebar)
+        root.addWidget(self.stack, 1)
+        self.switch_page("engine_base")
+
+    def _add_settings_page(self, key: str, page: QWidget) -> None:
+        self.page_keys.append(key)
+        self.stack.addWidget(page)
+
+    def _add_nav_group_label(self, layout: QVBoxLayout, text: str) -> None:
+        label = QLabel(text)
+        label.setObjectName("MutedText")
+        layout.addWidget(label)
+
+    def _add_settings_nav(self, layout: QVBoxLayout, key: str, text: str) -> None:
+        button = QPushButton(text)
+        button.setObjectName("NavButton")
+        button.setCheckable(True)
+        button.setFixedHeight(34)
+        button.clicked.connect(lambda _checked=False, nav_key=key: self.switch_page(nav_key))
+        self.nav_buttons[key] = button
+        layout.addWidget(button)
+
+    def switch_page(self, page_key: str) -> None:
+        if page_key not in self.page_keys:
+            return
+        self.stack.setCurrentIndex(self.page_keys.index(page_key))
+        for button_key, button in self.nav_buttons.items():
+            button.setChecked(button_key == page_key)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        if self._centered_once:
+            return
+        self._centered_once = True
+        self._resize_for_parent()
+        self._center_on_parent()
+
+    def _resize_for_parent(self) -> None:
+        parent = self.parentWidget()
+        if not parent:
+            return
+        parent_size = parent.size()
+        width = min(980, max(760, int(parent_size.width() * 0.62)))
+        height = min(640, max(520, int(parent_size.height() * 0.72)))
+        self.resize(width, height)
+
+    def _center_on_parent(self) -> None:
+        parent = self.parentWidget()
+        if parent:
+            parent_frame = parent.frameGeometry()
+            dialog_frame = self.frameGeometry()
+            dialog_frame.moveCenter(parent_frame.center())
+            self.move(dialog_frame.topLeft())
+            return
+        screen = self.screen()
+        if screen:
+            dialog_frame = self.frameGeometry()
+            dialog_frame.moveCenter(screen.availableGeometry().center())
+            self.move(dialog_frame.topLeft())
 
 
 class MainWindow(QMainWindow):
@@ -55,6 +203,12 @@ class MainWindow(QMainWindow):
         self.progress_percent_label: QLabel | None = None
         self.log_dialog: QDialog | None = None
         self.log_dialog_box: QTextEdit | None = None
+        self.settings_dialog: SettingsDialog | None = None
+        self.settings_button: QPushButton | None = None
+        self.toolbar_title: QLabel | None = None
+        self.toolbar_subtitle: QLabel | None = None
+        self.toolbar_health: QLabel | None = None
+        self.toolbar_compact_status: QLabel | None = None
         self.bottom_panel: QWidget | None = None
         self.current_task: ImageBatchTask | None = None
         self.last_failed_files: list[Path] = []
@@ -76,8 +230,6 @@ class MainWindow(QMainWindow):
         self._add_page("home", self._build_home())
         for key, feature in self.features.items():
             self._add_page(key, feature.build_panel())
-        self._add_page("engine_settings", EngineSettingsPanel())
-        self._add_page("tool_settings", ToolSettingsPanel())
         content.addWidget(self.stack, 1)
 
         self.file_panel = FilePanel()
@@ -99,17 +251,23 @@ class MainWindow(QMainWindow):
 
         title_block = QVBoxLayout()
         title_block.setSpacing(2)
-        title = QLabel(f"{APP_NAME} v{APP_VERSION}")
-        title.setObjectName("CardTitle")
-        subtitle = QLabel("High-quality Enhancement Assistant")
-        subtitle.setObjectName("MutedText")
-        title_block.addWidget(title)
-        title_block.addWidget(subtitle)
+        self.toolbar_title = QLabel(f"{APP_NAME} v{APP_VERSION}")
+        self.toolbar_title.setObjectName("CardTitle")
+        self.toolbar_subtitle = QLabel("High-quality Enhancement Assistant")
+        self.toolbar_subtitle.setObjectName("MutedText")
+        title_block.addWidget(self.toolbar_title)
+        title_block.addWidget(self.toolbar_subtitle)
         layout.addLayout(title_block, 1)
 
-        health = QLabel("Liquid Glass AppShell · Local batch workstation")
-        health.setObjectName("MutedText")
-        layout.addWidget(health)
+        self.toolbar_compact_status = QLabel("状态：就绪")
+        self.toolbar_compact_status.setObjectName("MutedText")
+        self.toolbar_compact_status.hide()
+        layout.addWidget(self.toolbar_compact_status, 1)
+
+        self.toolbar_health = QLabel("Liquid Glass AppShell · Local batch workstation")
+        self.toolbar_health.setObjectName("MutedText")
+        layout.addWidget(self.toolbar_health)
+
 
     def _build_sidebar(self) -> QWidget:
         sidebar = GlassSidebar()
@@ -132,8 +290,6 @@ class MainWindow(QMainWindow):
         self._add_nav_button(layout, "super_resolution", "✦", "智能媒体增强")
         self._add_nav_button(layout, "watermark", "◇", "批量加水印")
         self._add_nav_button(layout, "rename", "Aa", "批量重命名")
-        self._add_nav_button(layout, "engine_settings", "⚙", "引擎设置")
-        self._add_nav_button(layout, "tool_settings", "◌", "工具管理")
         layout.addStretch()
 
         self.run_button = QPushButton("开始处理")
@@ -179,7 +335,7 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentIndex(self.page_keys.index(key))
             for button_key, button in self.nav_buttons.items():
                 button.setChecked(button_key == key)
-            self.shell.toolbar.setVisible(not is_processing_page)
+            self._set_toolbar_compact(is_processing_page)
             if key == "super_resolution" and hasattr(self.features.get("super_resolution"), "refresh_from_engine_settings"):
                 self.features["super_resolution"].refresh_from_engine_settings()
             if hasattr(self, "file_panel"):
@@ -201,9 +357,6 @@ class MainWindow(QMainWindow):
         key = self.page_keys[self.stack.currentIndex()]
         if key == "home":
             self._log("请先选择左侧的功能模块。")
-            return
-        if key == "engine_settings":
-            self._log("引擎设置页用于管理引擎和模型，不执行图片处理。")
             return
 
         feature = self.features[key]
@@ -352,6 +505,8 @@ class MainWindow(QMainWindow):
             self.retry_failed_button.setEnabled((not is_running) and bool(self.last_failed_files))
         if self.status_label:
             self.status_label.setText("状态：处理中" if is_running else "状态：就绪")
+        if self.toolbar_compact_status:
+            self.toolbar_compact_status.setText("状态：处理中" if is_running else "状态：就绪")
 
     def _log(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -400,6 +555,12 @@ class MainWindow(QMainWindow):
         self.current_progress_label = QLabel("当前：未开始")
         self.current_progress_label.setObjectName("MutedText")
         layout.addWidget(self.current_progress_label, 1)
+
+        self.settings_button = QPushButton("设置")
+        self.settings_button.setObjectName("GhostButton")
+        self.settings_button.setFixedHeight(26)
+        self.settings_button.clicked.connect(self.show_settings_dialog)
+        layout.addWidget(self.settings_button)
 
         log_button = QPushButton("查看日志")
         log_button.setObjectName("GhostButton")
@@ -468,6 +629,53 @@ class MainWindow(QMainWindow):
 
         dialog.finished.connect(reset_log_dialog)
         dialog.show()
+
+    def show_settings_dialog(self) -> None:
+        if self.settings_dialog:
+            self.settings_dialog.raise_()
+            self.settings_dialog.activateWindow()
+            return
+        dialog = SettingsDialog(self)
+        self.settings_dialog = dialog
+
+        def reset_settings_dialog(_result: int) -> None:
+            self.settings_dialog = None
+            feature = self.features.get("super_resolution")
+            if hasattr(feature, "refresh_from_engine_settings"):
+                feature.refresh_from_engine_settings()
+
+        dialog.finished.connect(reset_settings_dialog)
+        dialog.show()
+
+    def _set_toolbar_compact(self, compact: bool) -> None:
+        toolbar_layout = self.shell.toolbar.layout()
+        if compact:
+            self.shell.toolbar.setFixedHeight(36)
+            if toolbar_layout:
+                toolbar_layout.setContentsMargins(12, 3, 12, 3)
+                toolbar_layout.setSpacing(10)
+            if self.toolbar_title:
+                self.toolbar_title.hide()
+            if self.toolbar_subtitle:
+                self.toolbar_subtitle.hide()
+            if self.toolbar_health:
+                self.toolbar_health.hide()
+            if self.toolbar_compact_status:
+                self.toolbar_compact_status.show()
+            return
+
+        self.shell.toolbar.setFixedHeight(72)
+        if toolbar_layout:
+            toolbar_layout.setContentsMargins(24, 14, 24, 14)
+            toolbar_layout.setSpacing(16)
+        if self.toolbar_title:
+            self.toolbar_title.show()
+        if self.toolbar_subtitle:
+            self.toolbar_subtitle.show()
+        if self.toolbar_health:
+            self.toolbar_health.show()
+        if self.toolbar_compact_status:
+            self.toolbar_compact_status.hide()
 
     def _set_current_progress(self, message: str) -> None:
         if self.current_progress_label:

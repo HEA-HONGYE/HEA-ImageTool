@@ -56,8 +56,9 @@ VIDEO_INTERPOLATION_HINTS = {
 
 
 class EngineSettingsPanel(QWidget):
-    def __init__(self) -> None:
+    def __init__(self, section: str | None = None) -> None:
         super().__init__()
+        self.section = section
         self.store = get_engine_settings_store()
         self.widgets: dict[str, dict[str, Any]] = {}
         self.video_widgets: dict[str, dict[str, Any]] = {}
@@ -82,34 +83,84 @@ class EngineSettingsPanel(QWidget):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
 
-        title = QLabel("引擎设置")
+        section_titles = {
+            "base": "基础配置",
+            "defaults": "默认处理引擎",
+            "library": "项目模型库",
+            "image": "图片超分引擎",
+            "video": "视频插帧引擎",
+            "threads": "线程与 GPU",
+        }
+        title = QLabel(section_titles.get(self.section or "", "引擎设置"))
         title.setObjectName("PanelTitle")
-        hint = QLabel("管理默认处理引擎、项目模型库、图片超分引擎和视频插帧引擎。")
+        hint_text = {
+            "base": "集中管理默认处理引擎、项目模型库、线程数量和 GPU 参数。",
+            "defaults": "设置普通图片、动态图片、视频超分和视频插帧的默认处理引擎。",
+            "library": "管理项目模型库、模型迁移、外部依赖检查和当前引擎模型导入。",
+            "image": "配置图片超分引擎、默认模型、倍率、Tile、GPU 和模型列表。",
+            "video": "配置视频插帧引擎、默认模型、插帧倍率、GPU 和模型列表。",
+            "threads": "设置线程数量、GPU ID 和多显卡相关参数。",
+        }.get(self.section or "", "管理默认处理引擎、项目模型库、图片超分引擎和视频插帧引擎。")
+        hint = QLabel(hint_text)
         hint.setObjectName("MutedText")
         hint.setWordWrap(True)
         layout.addWidget(title)
         layout.addWidget(hint)
-        layout.addWidget(self._build_top_bar())
-        layout.addWidget(self._build_model_library_bar())
+        if self.section in {None, "base", "defaults"}:
+            layout.addWidget(self._build_top_bar())
+        if self.section in {None, "base", "library"}:
+            layout.addWidget(self._build_model_library_bar())
 
-        image_group = QGroupBox("图片超分引擎")
-        image_layout = QVBoxLayout(image_group)
-        self.tabs = QTabWidget()
-        engines = {engine.engine_id: engine for engine in DEFAULT_ENGINE_MANAGER.list_engines()}
-        for engine_id in ENGINE_TAB_ORDER:
-            if engine_id in engines:
-                self.tabs.addTab(self._build_engine_tab(engines[engine_id]), engines[engine_id].display_name)
-        image_layout.addWidget(self.tabs)
-        layout.addWidget(image_group, 2)
+        if self.section in {None, "image"}:
+            self.tabs = QTabWidget()
+            self._style_engine_tabs(self.tabs)
+            engines = {engine.engine_id: engine for engine in DEFAULT_ENGINE_MANAGER.list_engines()}
+            for engine_id in ENGINE_TAB_ORDER:
+                if engine_id in engines:
+                    self.tabs.addTab(self._build_engine_tab(engines[engine_id]), engines[engine_id].display_name)
+            layout.addWidget(self.tabs, 1)
 
-        video_group = QGroupBox("视频插帧引擎")
-        video_layout = QVBoxLayout(video_group)
-        self.video_tabs = QTabWidget()
-        for engine_id in VIDEO_INTERPOLATION_TAB_ORDER:
-            self.video_tabs.addTab(self._build_interpolation_engine_tab(engine_id), VIDEO_INTERPOLATION_DISPLAY[engine_id])
-        video_layout.addWidget(self.video_tabs)
-        layout.addWidget(video_group, 1)
-        layout.addWidget(self._build_bottom_bar())
+        if self.section in {None, "video"}:
+            self.video_tabs = QTabWidget()
+            self._style_engine_tabs(self.video_tabs)
+            for engine_id in VIDEO_INTERPOLATION_TAB_ORDER:
+                self.video_tabs.addTab(self._build_interpolation_engine_tab(engine_id), VIDEO_INTERPOLATION_DISPLAY[engine_id])
+            layout.addWidget(self.video_tabs, 1)
+        if self.section in {None, "base", "threads"}:
+            layout.addWidget(self._build_bottom_bar())
+        layout.addStretch()
+
+    def _style_engine_tabs(self, tabs: QTabWidget) -> None:
+        tabs.setDocumentMode(True)
+        tabs.setStyleSheet(
+            """
+            QTabWidget::pane {
+                border: 0;
+                background: transparent;
+                margin-top: 8px;
+            }
+            QTabBar::tab {
+                min-height: 36px;
+                min-width: 104px;
+                padding: 8px 18px;
+                margin-right: 6px;
+                border: 1px solid rgba(118, 134, 159, 58);
+                border-radius: 10px;
+                background: rgba(255, 255, 255, 180);
+                color: #344054;
+                font-weight: 700;
+            }
+            QTabBar::tab:selected {
+                background: #2F7DF6;
+                color: white;
+                border-color: rgba(47, 125, 246, 90);
+            }
+            QTabBar::tab:hover:!selected {
+                background: rgba(232, 242, 255, 210);
+                color: #1F66D1;
+            }
+            """
+        )
 
     def _build_top_bar(self) -> QWidget:
         group = QGroupBox("默认处理引擎")
@@ -138,6 +189,8 @@ class EngineSettingsPanel(QWidget):
         optimize_button.setEnabled(False)
         help_button = QPushButton("帮助")
         help_button.setEnabled(False)
+        save_button = QPushButton("保存设置")
+        save_button.clicked.connect(self.save_settings)
         row.addWidget(QLabel("图片"))
         row.addWidget(self.default_image_combo, 1)
         row.addWidget(QLabel("动态图片"))
@@ -148,6 +201,7 @@ class EngineSettingsPanel(QWidget):
         row.addWidget(self.default_interpolation_combo, 1)
         row.addWidget(optimize_button)
         row.addWidget(help_button)
+        row.addWidget(save_button)
         return group
 
     def _build_model_library_bar(self) -> QWidget:
