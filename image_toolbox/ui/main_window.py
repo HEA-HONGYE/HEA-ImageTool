@@ -3,9 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QSize, Qt, QThreadPool, QUrl
+from PySide6.QtCore import QPoint, QSize, QSizeF, Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QPainter, QPixmap, QResizeEvent
-from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QFormLayout, QGraphicsOpacityEffect, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSlider, QStackedWidget, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
+from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QFormLayout, QGraphicsScene, QGraphicsView, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSlider, QStackedWidget, QTextEdit, QVBoxLayout, QWidget
 
 from image_toolbox import APP_NAME, APP_VERSION
 from image_toolbox.core.config import AppConfig
@@ -23,6 +25,10 @@ from image_toolbox.features.tool_settings import ToolSettingsPanel
 from image_toolbox.features.watermark import WatermarkFeature
 from image_toolbox.ui.file_panel import FilePanel
 from image_toolbox.ui.widgets import AppShell, GlassSidebar, GlassStatusBar
+
+
+BACKGROUND_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+BACKGROUND_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 
 
 class StableStackedWidget(QStackedWidget):
@@ -66,6 +72,10 @@ class SettingsContentPage(QWidget):
                 return
         self.scroll_area.verticalScrollBar().setValue(0)
 
+    def save_settings(self) -> None:
+        if hasattr(self.panel, "save_settings"):
+            self.panel.save_settings()
+
 
 class PersonalizationPanel(QWidget):
     def __init__(self, apply_callback) -> None:
@@ -82,6 +92,10 @@ class PersonalizationPanel(QWidget):
         self.background_edit: QLineEdit | None = None
         self.overlay_checkbox: QCheckBox | None = None
         self.show_icon_checkbox: QCheckBox | None = None
+        self.preview_timer = QTimer(self)
+        self.preview_timer.setSingleShot(True)
+        self.preview_timer.setInterval(80)
+        self.preview_timer.timeout.connect(self._emit_preview)
         self._build()
 
     def _build(self) -> None:
@@ -115,7 +129,6 @@ class PersonalizationPanel(QWidget):
         bg_form = QFormLayout(bg_group)
         bg_form.setSpacing(12)
         self.background_edit = QLineEdit(self.config.get("background_path", ""))
-        self.background_edit.editingFinished.connect(self._save_and_apply)
         browse_button = QPushButton("插入图片")
         browse_button.clicked.connect(self._choose_background)
         background_row = QHBoxLayout()
@@ -124,7 +137,7 @@ class PersonalizationPanel(QWidget):
         bg_form.addRow("背景图片", background_row)
 
         self.fit_combo = QComboBox()
-        self.fit_combo.addItem("自动裁剪填充", "center")
+        self.fit_combo.addItem("裁剪铺满", "center")
         self.fit_combo.addItem("拉伸填充", "stretch")
         self.fit_combo.addItem("平铺", "tile")
         self.fit_combo.setCurrentIndex(max(0, self.fit_combo.findData(self.config.get("background_fit", "center"))))
@@ -156,11 +169,27 @@ class PersonalizationPanel(QWidget):
         layout.addWidget(bg_group)
         layout.addStretch()
 
-        for widget in [self.opacity_slider, self.component_opacity_slider, self.motion_slider, self.bg_opacity_slider, self.blur_slider, self.fit_combo, self.overlay_checkbox, self.show_icon_checkbox]:
+        self._connect_live_preview()
+
+    def _connect_live_preview(self) -> None:
+        if self.background_edit:
+            self.background_edit.textChanged.connect(lambda _text: self._preview_and_apply())
+        for widget in [
+            self.opacity_slider,
+            self.component_opacity_slider,
+            self.motion_slider,
+            self.bg_opacity_slider,
+            self.blur_slider,
+            self.fit_combo,
+            self.overlay_checkbox,
+            self.show_icon_checkbox,
+        ]:
             if isinstance(widget, QSlider):
-                widget.valueChanged.connect(lambda _value: self._save_and_apply())
+                widget.valueChanged.connect(lambda _value: self._preview_and_apply())
+            elif isinstance(widget, QComboBox):
+                widget.currentIndexChanged.connect(lambda _index: self._preview_and_apply())
             elif widget is not None:
-                widget.currentIndexChanged.connect(lambda _index: self._save_and_apply()) if isinstance(widget, QComboBox) else widget.toggled.connect(lambda _checked: self._save_and_apply())
+                widget.toggled.connect(lambda _checked: self._preview_and_apply())
 
     def _build_slider(self, target: str, minimum: int, maximum: int, value: int) -> QWidget:
         container = QWidget()
@@ -209,42 +238,61 @@ class PersonalizationPanel(QWidget):
         row.addWidget(high_label)
         return container
 
-    def _choose_background(self) -> None:
-        selected, _ = QFileDialog.getOpenFileName(self, "选择背景图片", str(self.backgrounds_dir), "Images (*.jpg *.jpeg *.png *.webp *.bmp)")
-        if selected and self.background_edit:
-            self.background_edit.setText(selected)
-            self._save_and_apply()
-
     def _open_background_folder(self) -> None:
         self.backgrounds_dir.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.backgrounds_dir.resolve())))
 
+    def _choose_background(self) -> None:
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择背景媒体",
+            str(self.backgrounds_dir),
+            "Media (*.jpg *.jpeg *.png *.webp *.bmp *.mp4 *.mov *.mkv *.avi *.webm *.m4v);;Images (*.jpg *.jpeg *.png *.webp *.bmp);;Videos (*.mp4 *.mov *.mkv *.avi *.webm *.m4v)",
+        )
+        if selected and self.background_edit:
+            self.background_edit.setText(selected)
+
     def _refresh_background(self) -> None:
         if self.background_edit and not self.background_edit.text().strip():
-            images = []
+            media_files: list[Path] = []
             if self.backgrounds_dir.exists():
-                for pattern in ["*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp"]:
-                    images.extend(self.backgrounds_dir.glob(pattern))
-            if images:
-                self.background_edit.setText(str(images[0]))
-        self._save_and_apply()
+                for suffix in sorted(BACKGROUND_IMAGE_EXTENSIONS | BACKGROUND_VIDEO_EXTENSIONS):
+                    media_files.extend(self.backgrounds_dir.glob(f"*{suffix}"))
+                    media_files.extend(self.backgrounds_dir.glob(f"*{suffix.upper()}"))
+            if media_files:
+                self.background_edit.setText(str(media_files[0]))
 
     def _clear_background(self) -> None:
         if self.background_edit:
             self.background_edit.clear()
-        self._save_and_apply()
+
+    def _current_values(self) -> dict[str, object]:
+        return {
+            "window_opacity": self.opacity_slider.value() if self.opacity_slider else 100,
+            "component_opacity": self.component_opacity_slider.value() if self.component_opacity_slider else 100,
+            "motion_effects": self.motion_slider.value() if self.motion_slider else 0,
+            "background_path": self.background_edit.text().strip() if self.background_edit else "",
+            "background_fit": self.fit_combo.currentData() if self.fit_combo else "center",
+            "background_opacity": self.bg_opacity_slider.value() if self.bg_opacity_slider else 24,
+            "background_blur": self.blur_slider.value() if self.blur_slider else 0,
+            "overlay_enabled": self.overlay_checkbox.isChecked() if self.overlay_checkbox else True,
+            "show_launcher_icon": self.show_icon_checkbox.isChecked() if self.show_icon_checkbox else True,
+        }
+
+    def _preview_and_apply(self) -> None:
+        self.preview_timer.start()
+
+    def _emit_preview(self) -> None:
+        self.apply_callback(self._current_values())
 
     def _save_and_apply(self) -> None:
-        self.config.set("window_opacity", self.opacity_slider.value() if self.opacity_slider else 100)
-        self.config.set("component_opacity", self.component_opacity_slider.value() if self.component_opacity_slider else 100)
-        self.config.set("motion_effects", self.motion_slider.value() if self.motion_slider else 0)
-        self.config.set("background_path", self.background_edit.text().strip() if self.background_edit else "")
-        self.config.set("background_fit", self.fit_combo.currentData() if self.fit_combo else "center")
-        self.config.set("background_opacity", self.bg_opacity_slider.value() if self.bg_opacity_slider else 24)
-        self.config.set("background_blur", self.blur_slider.value() if self.blur_slider else 0)
-        self.config.set("overlay_enabled", self.overlay_checkbox.isChecked() if self.overlay_checkbox else True)
-        self.config.set("show_launcher_icon", self.show_icon_checkbox.isChecked() if self.show_icon_checkbox else True)
-        self.apply_callback()
+        values = self._current_values()
+        for key, value in values.items():
+            self.config.set(key, value)
+        self.apply_callback(values)
+
+    def save_settings(self) -> None:
+        self._save_and_apply()
 
 
 class SettingsDialog(QDialog):
@@ -299,6 +347,10 @@ class SettingsDialog(QDialog):
         self._add_settings_nav(side_layout, "personalization", "个性化")
         side_layout.addStretch()
 
+        save_button = QPushButton("保存设置")
+        save_button.clicked.connect(self.save_settings)
+        side_layout.addWidget(save_button)
+
         close_button = QPushButton("关闭")
         close_button.setObjectName("GhostButton")
         close_button.clicked.connect(self.accept)
@@ -335,7 +387,19 @@ class SettingsDialog(QDialog):
         index = self.page_keys.index(page_key)
         if page_key in self.page_factories:
             placeholder = self.page_widgets[page_key]
-            page = self.page_factories.pop(page_key)()
+            try:
+                page = self.page_factories[page_key]()
+            except Exception as exc:
+                page = QWidget()
+                error_layout = QVBoxLayout(page)
+                error_layout.setContentsMargins(24, 24, 24, 24)
+                error_label = QLabel(f"设置页面加载失败：{exc}")
+                error_label.setObjectName("MutedText")
+                error_label.setWordWrap(True)
+                error_layout.addWidget(error_label)
+                error_layout.addStretch()
+            else:
+                self.page_factories.pop(page_key)
             self.page_widgets[page_key] = page
             self.stack.removeWidget(placeholder)
             placeholder.deleteLater()
@@ -343,6 +407,11 @@ class SettingsDialog(QDialog):
         self.stack.setCurrentIndex(index)
         for button_key, button in self.nav_buttons.items():
             button.setChecked(button_key == page_key)
+
+    def save_settings(self) -> None:
+        for page in self.page_widgets.values():
+            if hasattr(page, "save_settings"):
+                page.save_settings()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -413,10 +482,25 @@ class MainWindow(QMainWindow):
         self.toolbar_health: QLabel | None = None
         self.toolbar_compact_status: QLabel | None = None
         self.bottom_panel: QWidget | None = None
+        self.background_layer: QFrame | None = None
         self.background_label: QLabel | None = None
+        self.background_mask: QWidget | None = None
+        self.background_video_view: QGraphicsView | None = None
+        self.background_video_scene: QGraphicsScene | None = None
+        self.background_video_item: QGraphicsVideoItem | None = None
         self.background_pixmap: QPixmap | None = None
-        self.background_effect: QGraphicsOpacityEffect | None = None
+        self.background_render_cache_key: tuple[int, int, str, str] | None = None
+        self.background_render_cache: QPixmap | None = None
+        self.background_player: QMediaPlayer | None = None
+        self.background_audio_output: QAudioOutput | None = None
+        self.background_media_path = ""
+        self.background_media_type = ""
         self.background_fit_mode = "center"
+        self.personalization_component_alpha: int | None = None
+        self.personalization_background_opacity: int | None = None
+        self.settings_paused_background_video = False
+        self.combo_paused_background_video = False
+        self.combo_popup_pause_count = 0
         self.current_task: ImageBatchTask | None = None
         self.last_failed_files: list[Path] = []
         self.last_failed_feature_key: str | None = None
@@ -424,14 +508,42 @@ class MainWindow(QMainWindow):
 
         self.shell = AppShell()
         self.setCentralWidget(self.shell)
-        self.background_label = QLabel(self.shell)
+        self.background_layer = QFrame(self.shell)
+        self.background_layer.setObjectName("PersonalizationBackgroundLayer")
+        self.background_layer.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.background_layer.hide()
+        self.background_layer.lower()
+
+        self.background_label = QLabel(self.background_layer)
         self.background_label.setObjectName("PersonalizationBackground")
         self.background_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.background_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.background_effect = QGraphicsOpacityEffect(self.background_label)
-        self.background_label.setGraphicsEffect(self.background_effect)
         self.background_label.hide()
         self.background_label.lower()
+        self.background_video_scene = QGraphicsScene(self.background_layer)
+        self.background_video_item = QGraphicsVideoItem()
+        self.background_video_scene.addItem(self.background_video_item)
+        self.background_video_view = QGraphicsView(self.background_video_scene, self.background_layer)
+        self.background_video_view.setObjectName("PersonalizationBackgroundVideo")
+        self.background_video_view.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.background_video_view.setFrameShape(QFrame.Shape.NoFrame)
+        self.background_video_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.background_video_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.background_video_view.setStyleSheet("background: transparent; border: none;")
+        self.background_video_view.hide()
+        self.background_video_view.lower()
+        self.background_mask = QWidget(self.background_layer)
+        self.background_mask.setObjectName("PersonalizationBackgroundMask")
+        self.background_mask.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.background_mask.hide()
+        self.background_player = QMediaPlayer(self)
+        self.background_audio_output = QAudioOutput(self)
+        self.background_audio_output.setVolume(0)
+        self.background_player.setAudioOutput(self.background_audio_output)
+        self.background_player.setVideoOutput(self.background_video_item)
+        if hasattr(self.background_player, "setLoops"):
+            self.background_player.setLoops(QMediaPlayer.Loops.Infinite)
+        self.background_player.mediaStatusChanged.connect(self._handle_background_media_status)
         self._build_toolbar(self.shell.toolbar)
         self.shell.toolbar.hide()
 
@@ -571,6 +683,7 @@ class MainWindow(QMainWindow):
             if self.bottom_panel:
                 self.bottom_panel.setVisible(is_processing_page)
             self._notify_file_context_changed()
+            self._update_background_layer()
         finally:
             self.setUpdatesEnabled(True)
             self.setWindowState(window_state)
@@ -885,11 +998,13 @@ class MainWindow(QMainWindow):
             self.settings_dialog.raise_()
             self.settings_dialog.activateWindow()
             return
+        self.settings_paused_background_video = self._pause_background_video_for_settings()
         dialog = SettingsDialog(self, self._apply_personalization)
         self.settings_dialog = dialog
 
         def reset_settings_dialog(_result: int) -> None:
             self.settings_dialog = None
+            self._resume_background_video_after_settings()
             feature = self.features.get("super_resolution")
             if hasattr(feature, "refresh_from_engine_settings"):
                 feature.refresh_from_engine_settings()
@@ -897,17 +1012,55 @@ class MainWindow(QMainWindow):
         dialog.finished.connect(reset_settings_dialog)
         dialog.show()
 
-    def _apply_personalization(self) -> None:
+    def _pause_background_video_for_settings(self) -> bool:
+        if not self.background_player or self.background_media_type != "video":
+            return False
+        if self.background_player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
+            return False
+        self.background_player.pause()
+        return True
+
+    def _resume_background_video_after_settings(self) -> None:
+        if not self.settings_paused_background_video:
+            return
+        self.settings_paused_background_video = False
+        if self.background_player and self.background_media_type == "video":
+            self.background_player.play()
+
+    def _pause_background_video_for_combo(self) -> None:
+        self.combo_popup_pause_count += 1
+        if self.combo_popup_pause_count > 1:
+            return
+        self.combo_paused_background_video = self._pause_background_video_for_settings()
+
+    def _resume_background_video_after_combo(self) -> None:
+        if self.combo_popup_pause_count <= 0:
+            return
+        self.combo_popup_pause_count -= 1
+        if self.combo_popup_pause_count > 0 or not self.combo_paused_background_video:
+            return
+        self.combo_paused_background_video = False
+        if self.background_player and self.background_media_type == "video":
+            self.background_player.play()
+
+    def _apply_personalization(self, preview: dict[str, object] | None = None) -> None:
         config = AppConfig("personalization")
-        opacity = config.get("window_opacity", 100, int)
+        values = preview or {}
+
+        def value(key: str, default, value_type=None):
+            return values[key] if key in values else config.get(key, default, value_type)
+
+        opacity = int(value("window_opacity", 100, int))
         self.setWindowOpacity(max(70, min(100, opacity)) / 100)
 
-        background_path = config.get("background_path", "")
-        fit_mode = config.get("background_fit", "center")
-        background_opacity = max(0, min(100, config.get("background_opacity", 24, int)))
-        component_opacity = max(35, min(100, config.get("component_opacity", 100, int)))
+        background_path = str(value("background_path", ""))
+        fit_mode = str(value("background_fit", "center"))
+        background_opacity = max(0, min(100, int(value("background_opacity", 24, int))))
+        component_opacity = max(35, min(100, int(value("component_opacity", 100, int))))
         component_alpha = int(255 * component_opacity / 100)
-        component_style = f"""
+        component_style = ""
+        if self.personalization_component_alpha != component_alpha:
+            component_style = f"""
             QFrame#GlassToolbar,
             QFrame#GlassSidebar,
             QFrame#GlassPanel,
@@ -945,45 +1098,157 @@ class MainWindow(QMainWindow):
                 background: rgba(245, 247, 251, {component_alpha});
             }}
         """
+            self.personalization_component_alpha = component_alpha
 
-        if background_path and Path(background_path).exists():
-            pixmap = QPixmap(str(Path(background_path)))
-            self.background_pixmap = pixmap if not pixmap.isNull() else None
+        background_file = Path(background_path) if background_path else None
+        if background_file and background_file.exists():
+            if background_file.suffix.lower() in BACKGROUND_VIDEO_EXTENSIONS:
+                if self.background_media_type != "video" or self.background_media_path != str(background_file):
+                    self._set_background_video(background_file)
+            else:
+                if self.background_media_type != "image" or self.background_media_path != str(background_file):
+                    self._set_background_image(background_file)
         else:
-            self.background_pixmap = None
-        self.background_fit_mode = fit_mode
-        if self.background_effect:
-            self.background_effect.setOpacity(background_opacity / 100)
+            self._clear_background_media()
+        if self.background_fit_mode != fit_mode:
+            self.background_fit_mode = fit_mode
+            self.background_render_cache_key = None
+            self.background_render_cache = None
+        if self.personalization_background_opacity != background_opacity:
+            self._set_background_mask_opacity(background_opacity)
+            self.personalization_background_opacity = background_opacity
         self._update_background_layer()
 
-        self.shell.setStyleSheet(component_style if component_opacity < 100 else "")
+        if component_style or (component_opacity >= 100 and self.shell.styleSheet()):
+            self.shell.setStyleSheet(component_style if component_opacity < 100 else "")
+
+    def _set_background_image(self, path: Path) -> None:
+        if self.background_player:
+            self.background_player.stop()
+        if self.background_video_view:
+            self.background_video_view.hide()
+        pixmap = QPixmap(str(path))
+        self.background_pixmap = pixmap if not pixmap.isNull() else None
+        self.background_media_path = str(path)
+        self.background_media_type = "image" if self.background_pixmap else ""
+        self.background_render_cache_key = None
+        self.background_render_cache = None
+
+    def _set_background_video(self, path: Path) -> None:
+        if not self.background_player:
+            return
+        self.background_pixmap = None
+        self.background_render_cache_key = None
+        self.background_render_cache = None
+        path_text = str(path)
+        if self.background_media_type != "video" or self.background_media_path != path_text:
+            self.background_player.setSource(QUrl.fromLocalFile(path_text))
+            self.background_media_path = path_text
+        self.background_media_type = "video"
+        self.background_player.play()
+
+    def _clear_background_media(self) -> None:
+        self.background_pixmap = None
+        self.background_media_path = ""
+        self.background_media_type = ""
+        if self.background_player:
+            self.background_player.stop()
+            self.background_player.setSource(QUrl())
+        if self.background_video_view:
+            self.background_video_view.hide()
+        if self.background_layer:
+            self.background_layer.hide()
+        if self.background_label:
+            self.background_label.clear()
+            self.background_label.hide()
+
+    def _set_background_mask_opacity(self, background_opacity: int) -> None:
+        if not self.background_mask:
+            return
+        mask_alpha = int(255 * (100 - max(0, min(100, background_opacity))) / 100)
+        self.background_mask.setStyleSheet(f"background: rgba(245, 247, 251, {mask_alpha});")
+
+    def _handle_background_media_status(self, status: QMediaPlayer.MediaStatus) -> None:
+        if status == QMediaPlayer.MediaStatus.EndOfMedia and self.background_player and self.background_media_type == "video":
+            self.background_player.setPosition(0)
+            self.background_player.play()
 
     def _update_background_layer(self) -> None:
-        if not self.background_label:
+        if not self.background_layer or not self.background_label:
             return
-        self.background_label.setGeometry(self.shell.rect())
+        self.background_layer.setGeometry(self.shell.rect())
+        self.background_layer.lower()
+        self.background_label.setGeometry(self.background_layer.rect())
         self.background_label.lower()
+        if self.background_video_view:
+            self.background_video_view.setGeometry(self.background_layer.rect())
+            self.background_video_view.lower()
+        if self.background_video_scene:
+            self.background_video_scene.setSceneRect(self.background_layer.rect())
+        if self.background_video_item:
+            self.background_video_item.setSize(QSizeF(self.background_layer.width(), self.background_layer.height()))
+        if self.background_mask:
+            self.background_mask.setGeometry(self.background_layer.rect())
+            self.background_mask.raise_()
+
+        def show_background_layer() -> None:
+            self.background_layer.show()
+            self.background_layer.lower()
+            if self.background_mask:
+                self.background_mask.show()
+                self.background_mask.raise_()
+
+        def hide_background_layer() -> None:
+            if self.background_mask:
+                self.background_mask.hide()
+            self.background_layer.hide()
+
+        if self.background_video_view and self.background_video_item:
+            if self.background_media_type == "video":
+                if self.background_fit_mode == "stretch":
+                    self.background_video_item.setAspectRatioMode(Qt.AspectRatioMode.IgnoreAspectRatio)
+                else:
+                    self.background_video_item.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatioByExpanding)
+                self.background_label.clear()
+                self.background_label.hide()
+                self.background_video_view.show()
+                self.background_video_view.lower()
+                show_background_layer()
+                return
+
         if not self.background_pixmap or self.background_pixmap.isNull():
             self.background_label.clear()
             self.background_label.hide()
+            if self.background_video_view:
+                self.background_video_view.hide()
+            hide_background_layer()
             return
 
         target_size = self.background_label.size()
         if target_size.isEmpty():
             return
-        if self.background_fit_mode == "stretch":
-            pixmap = self.background_pixmap.scaled(
-                target_size,
-                Qt.AspectRatioMode.IgnoreAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        elif self.background_fit_mode == "tile":
-            pixmap = self._build_tiled_background(target_size)
+        cache_key = (target_size.width(), target_size.height(), self.background_fit_mode, self.background_media_path)
+        if self.background_render_cache_key == cache_key and self.background_render_cache:
+            pixmap = self.background_render_cache
         else:
-            pixmap = self._build_cover_background(target_size)
+            if self.background_fit_mode == "stretch":
+                pixmap = self.background_pixmap.scaled(
+                    target_size,
+                    Qt.AspectRatioMode.IgnoreAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            elif self.background_fit_mode == "tile":
+                pixmap = self._build_tiled_background(target_size)
+            else:
+                pixmap = self._build_cover_background(target_size)
+            self.background_render_cache_key = cache_key
+            self.background_render_cache = pixmap
         self.background_label.setPixmap(pixmap)
         self.background_label.show()
         self.background_label.lower()
+        if self.background_video_view:
+            self.background_video_view.hide()
+        show_background_layer()
 
     def _build_cover_background(self, target_size: QSize) -> QPixmap:
         if not self.background_pixmap or self.background_pixmap.isNull():
@@ -1090,4 +1355,6 @@ class MainWindow(QMainWindow):
             self.current_task.cancel()
             self.thread_pool.waitForDone(3000)
 
+        if self.background_player:
+            self.background_player.stop()
         event.accept()

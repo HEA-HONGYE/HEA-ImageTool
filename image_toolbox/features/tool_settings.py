@@ -38,7 +38,7 @@ class ToolSettingsPanel(QWidget):
         self.path_edits: dict[str, QLineEdit] = {}
         self.import_strategy_combo: QComboBox | None = None
         self._build()
-        self.refresh()
+        self._load_configured_paths()
 
     def _build(self) -> None:
         layout = QVBoxLayout(self)
@@ -101,17 +101,13 @@ class ToolSettingsPanel(QWidget):
             browse_button = QPushButton("浏览")
             browse_button.setFixedWidth(72)
             browse_button.clicked.connect(lambda _checked=False, item=tool_id: self._browse_tool(item))
-            save_button = QPushButton("保存并检测")
-            save_button.setFixedWidth(104)
-            save_button.clicked.connect(lambda _checked=False, item=tool_id: self._save_tool_path(item))
             open_button = QPushButton("打开目录")
             open_button.setFixedWidth(88)
             open_button.clicked.connect(lambda _checked=False, item=tool_id: self._open_tool_dir(item))
             layout.addWidget(label, row_index, 0)
             layout.addWidget(edit, row_index, 1)
             layout.addWidget(browse_button, row_index, 2)
-            layout.addWidget(save_button, row_index, 3)
-            layout.addWidget(open_button, row_index, 4)
+            layout.addWidget(open_button, row_index, 3)
         return group
 
     def _build_import_group(self) -> QWidget:
@@ -142,12 +138,17 @@ class ToolSettingsPanel(QWidget):
                     health.version,
                     health.reason,
                 ]
-            for col, value in enumerate(values):
-                self.table.setItem(row, col, QTableWidgetItem(value))
+                for col, value in enumerate(values):
+                    self.table.setItem(row, col, QTableWidgetItem(value))
         for tool_id, edit in self.path_edits.items():
             configured = self.manager.configured_path(tool_id)
             health = health_map.get(tool_id)
             edit.setText(str(configured or (health.path if health and health.path else "")))
+
+    def _load_configured_paths(self) -> None:
+        for tool_id, edit in self.path_edits.items():
+            configured = self.manager.configured_path(tool_id)
+            edit.setText(str(configured or ""))
 
     def _status_text(self, status: ToolHealthStatus) -> str:
         return {
@@ -167,6 +168,13 @@ class ToolSettingsPanel(QWidget):
         if not text:
             return
         self.manager.set_configured_path(tool_id, Path(text))
+        self.refresh()
+
+    def save_settings(self) -> None:
+        for tool_id, edit in self.path_edits.items():
+            text = edit.text().strip()
+            if text:
+                self.manager.set_configured_path(tool_id, Path(text))
         self.refresh()
 
     def _open_tool_dir(self, tool_id: str) -> None:

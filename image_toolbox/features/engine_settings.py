@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -55,6 +55,30 @@ VIDEO_INTERPOLATION_HINTS = {
 }
 
 
+class ModelScanWorker(QObject):
+    result = Signal(str, object, object)
+    error = Signal(str, str)
+    progress = Signal(str)
+    finished = Signal()
+
+    def __init__(self, engine_ids: list[str]) -> None:
+        super().__init__()
+        self.engine_ids = engine_ids
+
+    def run(self) -> None:
+        for engine_id in self.engine_ids:
+            self.progress.emit(engine_id)
+            try:
+                engine = DEFAULT_ENGINE_MANAGER.get_engine(engine_id)
+                models = engine.scan_models()
+                paths = {model.name: str(engine.get_model_path(model.name) or "") for model in models}
+            except Exception as exc:  # noqa: BLE001
+                self.error.emit(engine_id, str(exc))
+                continue
+            self.result.emit(engine_id, models, paths)
+        self.finished.emit()
+
+
 class EngineSettingsPanel(QWidget):
     def __init__(self, section: str | None = None) -> None:
         super().__init__()
@@ -76,6 +100,9 @@ class EngineSettingsPanel(QWidget):
         self.status_label: QLabel | None = None
         self.tabs: QTabWidget | None = None
         self.video_tabs: QTabWidget | None = None
+        self._model_scan_thread: QThread | None = None
+        self._model_scan_worker: ModelScanWorker | None = None
+        self._model_scan_button: QPushButton | None = None
         self._build()
 
     def _build(self) -> None:
@@ -112,6 +139,7 @@ class EngineSettingsPanel(QWidget):
             layout.addWidget(self._build_model_library_bar())
 
         if self.section in {None, "image"}:
+            layout.addWidget(self._build_image_engine_actions())
             self.tabs = QTabWidget()
             self._style_engine_tabs(self.tabs)
             engines = {engine.engine_id: engine for engine in DEFAULT_ENGINE_MANAGER.list_engines()}
@@ -129,6 +157,21 @@ class EngineSettingsPanel(QWidget):
         if self.section in {None, "base", "threads"}:
             layout.addWidget(self._build_bottom_bar())
         layout.addStretch()
+
+    def _build_image_engine_actions(self) -> QWidget:
+        group = QGroupBox("引擎检测")
+        row = QHBoxLayout(group)
+        hint = QLabel("点击后统一检测 6 个图片超分引擎和模型状态。")
+        hint.setObjectName("MutedText")
+        detect_engine_button = QPushButton("一键检测引擎")
+        detect_engine_button.clicked.connect(self._test_all_image_engines)
+        detect_model_button = QPushButton("一键检测模型")
+        detect_model_button.clicked.connect(self._scan_all_image_models)
+        self._model_scan_button = detect_model_button
+        row.addWidget(hint, 1)
+        row.addWidget(detect_engine_button)
+        row.addWidget(detect_model_button)
+        return group
 
     def _style_engine_tabs(self, tabs: QTabWidget) -> None:
         tabs.setDocumentMode(True)
@@ -189,8 +232,6 @@ class EngineSettingsPanel(QWidget):
         optimize_button.setEnabled(False)
         help_button = QPushButton("帮助")
         help_button.setEnabled(False)
-        save_button = QPushButton("保存设置")
-        save_button.clicked.connect(self.save_settings)
         row.addWidget(QLabel("图片"))
         row.addWidget(self.default_image_combo, 1)
         row.addWidget(QLabel("动态图片"))
@@ -201,7 +242,6 @@ class EngineSettingsPanel(QWidget):
         row.addWidget(self.default_interpolation_combo, 1)
         row.addWidget(optimize_button)
         row.addWidget(help_button)
-        row.addWidget(save_button)
         return group
 
     def _build_model_library_bar(self) -> QWidget:
@@ -240,7 +280,7 @@ class EngineSettingsPanel(QWidget):
         form = QFormLayout(status_group)
         enabled = QCheckBox("启用该引擎")
         enabled.setChecked(settings.enabled)
-        status = QLabel(self._status_text(engine, settings))
+        status = QLabel(self._cached_status_text(engine, settings))
         status.setObjectName("MutedText")
         status.setWordWrap(True)
         exe_edit = QLineEdit(settings.executable_path or str(engine.executable_path))
@@ -256,6 +296,7 @@ class EngineSettingsPanel(QWidget):
         defaults_group = QGroupBox("默认参数")
         params = QFormLayout(defaults_group)
         model_combo = QComboBox()
+        model_combo.addItem("点击扫描模型加载", settings.default_model)
         scale_combo = QComboBox()
         for scale in engine.supported_scales:
             scale_combo.addItem(f"{scale}x", scale)
@@ -306,18 +347,9 @@ class EngineSettingsPanel(QWidget):
 
         models_group = QGroupBox("模型管理")
         models_layout = QVBoxLayout(models_group)
-        buttons = QHBoxLayout()
-        scan_button = QPushButton("扫描模型")
-        test_button = QPushButton("测试引擎")
-        save_button = QPushButton("保存设置")
-        buttons.addWidget(scan_button)
-        buttons.addWidget(test_button)
-        buttons.addStretch()
-        buttons.addWidget(save_button)
         table = QTableWidget(0, 8)
         table.setHorizontalHeaderLabels(["启用", "默认", "模型名称", "模型路径", "备注", "质量", "速度", "显存"])
         table.verticalHeader().setVisible(False)
-        models_layout.addLayout(buttons)
         models_layout.addWidget(table)
         layout.addWidget(models_group, 1)
 
@@ -337,10 +369,7 @@ class EngineSettingsPanel(QWidget):
             "format": format_combo,
             "table": table,
         }
-        scan_button.clicked.connect(lambda _checked=False, e=engine: self.scan_models(e.engine_id))
-        test_button.clicked.connect(lambda _checked=False, e=engine, label=status: self._test_engine(e, label))
-        save_button.clicked.connect(self.save_settings)
-        self.scan_models(engine.engine_id)
+        self._load_cached_models(engine.engine_id)
         return outer
 
     def _make_collapsible(self, group: QGroupBox, expanded: bool = False) -> None:
@@ -537,8 +566,6 @@ class EngineSettingsPanel(QWidget):
         self.multi_gpu_tile_spin.setRange(32, 2048)
         self.multi_gpu_tile_spin.setValue(self.store.global_settings.multi_gpu_tile)
         self.multi_gpu_tile_spin.setEnabled(False)
-        save = QPushButton("保存全部设置")
-        save.clicked.connect(self.save_settings)
         self.status_label = QLabel(f"配置文件：{self.store.path}")
         self.status_label.setObjectName("MutedText")
         self.gpu_id_edit.setMinimumWidth(140)
@@ -557,7 +584,6 @@ class EngineSettingsPanel(QWidget):
         grid.addWidget(self.multi_gpu_id_edit, 1, 6)
         grid.addWidget(QLabel("块大小"), 1, 7)
         grid.addWidget(self.multi_gpu_tile_spin, 1, 8)
-        grid.addWidget(save, 0, 8)
         grid.setColumnStretch(2, 1)
         grid.setColumnStretch(6, 1)
         return group
@@ -687,28 +713,109 @@ class EngineSettingsPanel(QWidget):
         available, reason = engine.health_check()
         return f"可用：{engine.executable_path}" if available else f"不可用：{reason}"
 
+    def _cached_status_text(self, engine, settings: EngineSettings) -> str:
+        if not settings.enabled:
+            return "已禁用"
+        if "health_available" not in settings.extra_params:
+            return "未检测，点击一键检测引擎"
+        available = bool(settings.extra_params.get("health_available"))
+        reason = str(settings.extra_params.get("health_reason", ""))
+        return f"可用：{settings.executable_path or engine.executable_path}" if available else f"不可用：{reason}"
+
     def _test_engine(self, engine, label: QLabel) -> None:
         if hasattr(engine, "_health_cache"):
             engine._health_cache = None
         available, reason = engine.health_check()
+        settings = self.store.get_engine(engine.engine_id)
+        settings.extra_params["health_available"] = available
+        settings.extra_params["health_reason"] = "" if available else reason
+        self.store.update_engine(settings)
         label.setText(f"可用：{engine.executable_path}" if available else f"不可用：{reason}")
+
+    def _test_all_image_engines(self) -> None:
+        for engine_id in ENGINE_TAB_ORDER:
+            widgets = self.widgets.get(engine_id)
+            if not widgets:
+                continue
+            engine = DEFAULT_ENGINE_MANAGER.get_engine(engine_id)
+            label: QLabel = widgets["status"]
+            self._test_engine(engine, label)
+        self.store.save()
+
+    def _scan_all_image_models(self) -> None:
+        if self._model_scan_thread and self._model_scan_thread.isRunning():
+            return
+        engine_ids = [engine_id for engine_id in ENGINE_TAB_ORDER if engine_id in self.widgets]
+        if not engine_ids:
+            return
+        if self._model_scan_button:
+            self._model_scan_button.setEnabled(False)
+            self._model_scan_button.setText("检测中...")
+        self._model_scan_thread = QThread(self)
+        self._model_scan_worker = ModelScanWorker(engine_ids)
+        self._model_scan_worker.moveToThread(self._model_scan_thread)
+        self._model_scan_thread.started.connect(self._model_scan_worker.run)
+        self._model_scan_worker.progress.connect(self._on_model_scan_progress)
+        self._model_scan_worker.result.connect(self._on_model_scan_result)
+        self._model_scan_worker.error.connect(self._on_model_scan_error)
+        self._model_scan_worker.finished.connect(self._on_model_scan_finished)
+        self._model_scan_worker.finished.connect(self._model_scan_thread.quit)
+        self._model_scan_worker.finished.connect(self._model_scan_worker.deleteLater)
+        self._model_scan_thread.finished.connect(self._on_model_scan_thread_finished)
+        self._model_scan_thread.finished.connect(self._model_scan_thread.deleteLater)
+        self._model_scan_thread.start()
+
+    def _on_model_scan_progress(self, engine_id: str) -> None:
+        if self._model_scan_button:
+            self._model_scan_button.setText(f"检测中 {engine_id}")
+
+    def _on_model_scan_result(self, engine_id: str, models: object, paths: object) -> None:
+        self._apply_scanned_models(engine_id, list(models), dict(paths), save=False)
+
+    def _on_model_scan_error(self, engine_id: str, message: str) -> None:
+        widgets = self.widgets.get(engine_id)
+        if not widgets:
+            return
+        table: QTableWidget = widgets["table"]
+        combo: QComboBox = widgets["model_combo"]
+        table.setRowCount(0)
+        combo.clear()
+        combo.addItem(f"检测失败：{message}", "")
+
+    def _on_model_scan_finished(self) -> None:
+        self.store.save()
+        if self._model_scan_button:
+            self._model_scan_button.setEnabled(True)
+            self._model_scan_button.setText("一键检测模型")
+
+    def _on_model_scan_thread_finished(self) -> None:
+        self._model_scan_thread = None
+        self._model_scan_worker = None
 
     def scan_models(self, engine_id: str) -> None:
         engine = DEFAULT_ENGINE_MANAGER.get_engine(engine_id)
+        models = engine.scan_models()
+        paths = {model.name: str(engine.get_model_path(model.name) or "") for model in models}
+        self._apply_scanned_models(engine_id, models, paths, save=True)
+
+    def _apply_scanned_models(self, engine_id: str, models: list[Any], paths: dict[str, str], save: bool) -> None:
         settings = self.store.get_engine(engine_id)
         widgets = self.widgets[engine_id]
         table: QTableWidget = widgets["table"]
         combo: QComboBox = widgets["model_combo"]
-        models = engine.scan_models()
+        settings.extra_params["models_scanned"] = True
         table.setRowCount(0)
         combo.clear()
         for model in models:
+            model_path = paths.get(model.name, "")
             model_settings = settings.models.get(model.name) or ModelSettings(
                 model_id=model.name,
                 display_name=model.display_name,
-                path=str(engine.get_model_path(model.name) or ""),
                 recommended_use=model.description,
             )
+            model_settings.display_name = model.display_name or model_settings.display_name or model.name
+            model_settings.path = model_path
+            model_settings.recommended_use = model.description or model_settings.recommended_use
             settings.models[model.name] = model_settings
             row = table.rowCount()
             table.insertRow(row)
@@ -716,7 +823,7 @@ class EngineSettingsPanel(QWidget):
                 QTableWidgetItem(),
                 QTableWidgetItem(),
                 QTableWidgetItem(model.display_name or model.name),
-                QTableWidgetItem(model_settings.path or str(engine.get_model_path(model.name) or "")),
+                QTableWidgetItem(model_settings.path),
                 QTableWidgetItem(model_settings.note),
                 QTableWidgetItem(str(model_settings.quality_score)),
                 QTableWidgetItem(str(model_settings.speed_score)),
@@ -729,7 +836,46 @@ class EngineSettingsPanel(QWidget):
                 table.setItem(row, col, item)
             if model_settings.enabled:
                 combo.addItem(model.display_name or model.name, model.name)
-        combo.setCurrentIndex(max(0, combo.findData(settings.default_model or (models[0].name if models else ""))))
+        if models:
+            combo.setCurrentIndex(max(0, combo.findData(settings.default_model or models[0].name)))
+        else:
+            settings.default_model = ""
+            combo.addItem("未检测到模型", "")
+        table.resizeColumnsToContents()
+        self.store.update_engine(settings)
+        if save:
+            self.store.save()
+
+    def _load_cached_models(self, engine_id: str) -> None:
+        settings = self.store.get_engine(engine_id)
+        if not settings.models:
+            return
+        widgets = self.widgets[engine_id]
+        table: QTableWidget = widgets["table"]
+        combo: QComboBox = widgets["model_combo"]
+        table.setRowCount(0)
+        combo.clear()
+        for model_id, model_settings in settings.models.items():
+            row = table.rowCount()
+            table.insertRow(row)
+            values = [
+                QTableWidgetItem(),
+                QTableWidgetItem(),
+                QTableWidgetItem(model_settings.display_name or model_id),
+                QTableWidgetItem(model_settings.path),
+                QTableWidgetItem(model_settings.note),
+                QTableWidgetItem(str(model_settings.quality_score)),
+                QTableWidgetItem(str(model_settings.speed_score)),
+                QTableWidgetItem(str(model_settings.memory_score)),
+            ]
+            values[0].setCheckState(Qt.CheckState.Checked if model_settings.enabled else Qt.CheckState.Unchecked)
+            values[1].setCheckState(Qt.CheckState.Checked if model_settings.is_default or settings.default_model == model_id else Qt.CheckState.Unchecked)
+            values[2].setData(Qt.ItemDataRole.UserRole, model_id)
+            for col, item in enumerate(values):
+                table.setItem(row, col, item)
+            if model_settings.enabled:
+                combo.addItem(model_settings.display_name or model_id, model_id)
+        combo.setCurrentIndex(max(0, combo.findData(settings.default_model)))
         table.resizeColumnsToContents()
 
     def save_settings(self) -> None:
@@ -770,7 +916,8 @@ class EngineSettingsPanel(QWidget):
                 settings.extra_params["needs_model_migration"] = True
                 settings.model_dir = str(get_engine_models_dir(engine.engine_id))
                 widgets["model_dir"].setText(settings.model_dir)
-            settings.default_model = widgets["model_combo"].currentData() or ""
+            if widgets["model_combo"].count() > 0:
+                settings.default_model = widgets["model_combo"].currentData() or settings.default_model
             settings.default_scale = widgets["scale_combo"].currentData() or 0
             settings.default_tile = widgets["tile"].value()
             settings.low_memory_default = widgets["low_memory"].isChecked()
@@ -780,6 +927,11 @@ class EngineSettingsPanel(QWidget):
             settings.extra_params["use_tta"] = widgets["tta"].isChecked()
             settings.extra_params["gpu_id"] = widgets["gpu"].text().strip() or self.store.global_settings.gpu_id
             table: QTableWidget = widgets["table"]
+            if table.rowCount() == 0:
+                self.store.update_engine(settings)
+                if hasattr(engine, "_health_cache"):
+                    engine._health_cache = None
+                continue
             first_enabled = ""
             checked_default = ""
             for row in range(table.rowCount()):

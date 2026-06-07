@@ -1,12 +1,31 @@
 from __future__ import annotations
 
 from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QFrame, QLabel, QPushButton, QSpinBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QComboBox, QDoubleSpinBox, QFrame, QLabel, QPushButton, QSpinBox, QVBoxLayout, QWidget
 
 
 class NoWheelComboBox(QComboBox):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setMaxVisibleItems(12)
+        view = self.view()
+        view.setUniformItemSizes(True)
+        view.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
         event.ignore()
+
+    def showPopup(self) -> None:  # noqa: N802
+        pause = getattr(self.window(), "_pause_background_video_for_combo", None)
+        if callable(pause):
+            pause()
+        super().showPopup()
+
+    def hidePopup(self) -> None:  # noqa: N802
+        super().hidePopup()
+        resume = getattr(self.window(), "_resume_background_video_after_combo", None)
+        if callable(resume):
+            resume()
 
 
 class NoWheelSpinBox(QSpinBox):

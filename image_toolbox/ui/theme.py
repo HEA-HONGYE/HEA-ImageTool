@@ -2,6 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from image_toolbox.core.paths import get_assets_dir
+
+
+def _asset_url(relative_path: str) -> str:
+    return (get_assets_dir() / relative_path).resolve().as_posix()
+
+
+CHEVRON_DOWN = _asset_url("icons/chevron-down.svg")
+CHEVRON_DOWN_HOVER = _asset_url("icons/chevron-down-hover.svg")
+CHEVRON_DOWN_SMALL = _asset_url("icons/chevron-down-small.svg")
+CHEVRON_DOWN_SMALL_HOVER = _asset_url("icons/chevron-down-small-hover.svg")
+CHEVRON_UP = _asset_url("icons/chevron-up.svg")
+CHEVRON_UP_HOVER = _asset_url("icons/chevron-up-hover.svg")
+
 
 @dataclass(frozen=True)
 class ThemeTokens:
@@ -292,13 +306,13 @@ QComboBox::drop-down:hover {{
 }}
 
 QComboBox::down-arrow {{
-    image: url("assets/icons/chevron-down.svg");
+    image: url("{CHEVRON_DOWN}");
     width: 14px;
     height: 14px;
 }}
 
 QComboBox::down-arrow:hover {{
-    image: url("assets/icons/chevron-down-hover.svg");
+    image: url("{CHEVRON_DOWN_HOVER}");
 }}
 
 QLabel#DimensionSeparator {{
@@ -356,26 +370,26 @@ QDoubleSpinBox::down-button:hover {{
 
 QSpinBox::up-arrow,
 QDoubleSpinBox::up-arrow {{
-    image: url("assets/icons/chevron-up.svg");
+    image: url("{CHEVRON_UP}");
     width: 12px;
     height: 12px;
 }}
 
 QSpinBox::up-arrow:hover,
 QDoubleSpinBox::up-arrow:hover {{
-    image: url("assets/icons/chevron-up-hover.svg");
+    image: url("{CHEVRON_UP_HOVER}");
 }}
 
 QSpinBox::down-arrow,
 QDoubleSpinBox::down-arrow {{
-    image: url("assets/icons/chevron-down-small.svg");
+    image: url("{CHEVRON_DOWN_SMALL}");
     width: 12px;
     height: 12px;
 }}
 
 QSpinBox::down-arrow:hover,
 QDoubleSpinBox::down-arrow:hover {{
-    image: url("assets/icons/chevron-down-small-hover.svg");
+    image: url("{CHEVRON_DOWN_SMALL_HOVER}");
 }}
 
 QComboBox QAbstractItemView {{

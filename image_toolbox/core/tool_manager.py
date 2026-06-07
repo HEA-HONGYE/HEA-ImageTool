@@ -124,8 +124,8 @@ class ToolManager:
     def resolve_tool_path(self, tool_id: str) -> Path | None:
         definition = TOOL_DEFINITIONS[tool_id]
         configured = self.configured_path(tool_id)
-        if configured:
-            return configured if self._allowed_runtime_path(configured) else None
+        if configured and self._allowed_runtime_path(configured):
+            return configured
         project_dir = self.project_tool_dir(tool_id)
         for executable_name in definition.executable_names:
             candidate = project_dir / executable_name
