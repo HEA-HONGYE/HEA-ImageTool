@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import ctypes
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QSize, QSizeF, Qt, QThreadPool, QTimer, QUrl
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QPainter, QPixmap, QResizeEvent
+from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QSize, QSizeF, Qt, QThreadPool, QTimer, QUrl
+from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QMouseEvent, QPainter, QPixmap, QResizeEvent
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
-from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QFormLayout, QGraphicsScene, QGraphicsView, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSlider, QStackedWidget, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QFormLayout, QGraphicsOpacityEffect, QGraphicsScene, QGraphicsView, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSlider, QStackedWidget, QTextEdit, QVBoxLayout, QWidget
 
 from image_toolbox import APP_NAME, APP_VERSION
 from image_toolbox.core.config import AppConfig
@@ -31,6 +32,28 @@ from image_toolbox.ui.widgets import AppShell, GlassSidebar, GlassStatusBar
 
 BACKGROUND_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 BACKGROUND_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
+WM_NCHITTEST = 0x0084
+HTLEFT = 10
+HTRIGHT = 11
+HTTOP = 12
+HTTOPLEFT = 13
+HTTOPRIGHT = 14
+HTBOTTOM = 15
+HTBOTTOMLEFT = 16
+HTBOTTOMRIGHT = 17
+RESIZE_BORDER_WIDTH = 8
+
+
+class WindowsMessage(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", ctypes.c_void_p),
+        ("message", ctypes.c_uint),
+        ("wParam", ctypes.c_size_t),
+        ("lParam", ctypes.c_ssize_t),
+        ("time", ctypes.c_uint32),
+        ("pt_x", ctypes.c_long),
+        ("pt_y", ctypes.c_long),
+    ]
 
 
 class StableStackedWidget(QStackedWidget):
@@ -47,6 +70,308 @@ class CompactScrollArea(QScrollArea):
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802
         return QSize(0, 0)
+
+
+class TaskCompletionToast(QFrame):
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("TaskCompletionToast")
+        self.setFixedWidth(360)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.opacity_effect.setOpacity(0.0)
+        self.setGraphicsEffect(self.opacity_effect)
+
+        self.hide_timer = QTimer(self)
+        self.hide_timer.setSingleShot(True)
+        self.hide_timer.timeout.connect(self._slide_out)
+        self.slide_animation: QPropertyAnimation | None = None
+        self.opacity_animation: QPropertyAnimation | None = None
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(12)
+
+        icon = QLabel("✓")
+        icon.setObjectName("TaskCompletionToastIcon")
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setFixedSize(34, 34)
+        layout.addWidget(icon)
+
+        text_layout = QVBoxLayout()
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(3)
+        self.title_label = QLabel("任务完成")
+        self.title_label.setObjectName("TaskCompletionToastTitle")
+        self.message_label = QLabel("")
+        self.message_label.setObjectName("TaskCompletionToastMessage")
+        self.message_label.setWordWrap(True)
+        text_layout.addWidget(self.title_label)
+        text_layout.addWidget(self.message_label)
+        layout.addLayout(text_layout, 1)
+
+    def show_message(self, title: str, message: str, duration_ms: int = 3600) -> None:
+        self.title_label.setText(title)
+        self.message_label.setText(message)
+        self.adjustSize()
+        self.raise_()
+        self.show()
+
+        end_pos = self._visible_position()
+        start_pos = QPoint(self.parentWidget().width() + 18, end_pos.y()) if self.parentWidget() else end_pos
+        self.move(start_pos)
+        self.opacity_effect.setOpacity(0.0)
+        self._animate(start_pos, end_pos, 0.0, 1.0, 360, QEasingCurve.Type.OutCubic)
+        self.hide_timer.start(duration_ms)
+
+    def reposition(self) -> None:
+        if self.isVisible():
+            self.move(self._visible_position())
+
+    def _visible_position(self) -> QPoint:
+        parent = self.parentWidget()
+        if parent is None:
+            return QPoint(0, 0)
+        margin = 24
+        return QPoint(parent.width() - self.width() - margin, parent.height() - self.height() - margin)
+
+    def _slide_out(self) -> None:
+        current = self.pos()
+        end = QPoint(self.parentWidget().width() + 18, current.y()) if self.parentWidget() else current
+        self._animate(current, end, self.opacity_effect.opacity(), 0.0, 260, QEasingCurve.Type.InCubic, self.hide)
+
+    def _animate(
+        self,
+        start_pos: QPoint,
+        end_pos: QPoint,
+        start_opacity: float,
+        end_opacity: float,
+        duration_ms: int,
+        easing: QEasingCurve.Type,
+        finished_callback=None,
+    ) -> None:
+        if self.slide_animation:
+            self.slide_animation.stop()
+        if self.opacity_animation:
+            self.opacity_animation.stop()
+
+        self.slide_animation = QPropertyAnimation(self, b"pos", self)
+        self.slide_animation.setStartValue(start_pos)
+        self.slide_animation.setEndValue(end_pos)
+        self.slide_animation.setDuration(duration_ms)
+        self.slide_animation.setEasingCurve(easing)
+
+        self.opacity_animation = QPropertyAnimation(self.opacity_effect, b"opacity", self)
+        self.opacity_animation.setStartValue(start_opacity)
+        self.opacity_animation.setEndValue(end_opacity)
+        self.opacity_animation.setDuration(duration_ms)
+        self.opacity_animation.setEasingCurve(easing)
+        if finished_callback:
+            self.opacity_animation.finished.connect(finished_callback)
+
+        self.slide_animation.start()
+        self.opacity_animation.start()
+
+
+class SettingsSaveToast(QFrame):
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("SettingsSaveToast")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setFixedWidth(210)
+
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.opacity_effect.setOpacity(0.0)
+        self.setGraphicsEffect(self.opacity_effect)
+
+        self.hide_timer = QTimer(self)
+        self.hide_timer.setSingleShot(True)
+        self.hide_timer.timeout.connect(self._fade_out)
+        self.opacity_animation: QPropertyAnimation | None = None
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 11, 16, 11)
+        layout.setSpacing(10)
+
+        icon = QLabel("✓")
+        icon.setObjectName("SettingsSaveToastIcon")
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setFixedSize(24, 24)
+        layout.addWidget(icon)
+
+        text_layout = QVBoxLayout()
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(1)
+        title = QLabel("保存成功")
+        title.setObjectName("SettingsSaveToastTitle")
+        message = QLabel("设置已更新")
+        message.setObjectName("SettingsSaveToastMessage")
+        text_layout.addWidget(title)
+        text_layout.addWidget(message)
+        layout.addLayout(text_layout, 1)
+
+    def show_message(self) -> None:
+        self.adjustSize()
+        self.move(self._visible_position())
+        self.raise_()
+        self.show()
+        self._animate(self.opacity_effect.opacity(), 1.0, 180, QEasingCurve.Type.OutCubic)
+        self.hide_timer.start(1700)
+
+    def reposition(self) -> None:
+        if self.isVisible():
+            self.move(self._visible_position())
+
+    def _visible_position(self) -> QPoint:
+        parent = self.parentWidget()
+        if parent is None:
+            return QPoint(0, 0)
+        margin = 26
+        return QPoint(parent.width() - self.width() - margin, margin)
+
+    def _fade_out(self) -> None:
+        self._animate(self.opacity_effect.opacity(), 0.0, 260, QEasingCurve.Type.InCubic, self.hide)
+
+    def _animate(
+        self,
+        start_opacity: float,
+        end_opacity: float,
+        duration_ms: int,
+        easing: QEasingCurve.Type,
+        finished_callback=None,
+    ) -> None:
+        if self.opacity_animation:
+            self.opacity_animation.stop()
+        self.opacity_animation = QPropertyAnimation(self.opacity_effect, b"opacity", self)
+        self.opacity_animation.setStartValue(start_opacity)
+        self.opacity_animation.setEndValue(end_opacity)
+        self.opacity_animation.setDuration(duration_ms)
+        self.opacity_animation.setEasingCurve(easing)
+        if finished_callback:
+            self.opacity_animation.finished.connect(finished_callback)
+        self.opacity_animation.start()
+
+
+class WindowMenuBar(QFrame):
+    def __init__(self, parent_window: "MainWindow") -> None:
+        super().__init__()
+        self.parent_window = parent_window
+        self.setObjectName("WindowMenuBar")
+        self.setFixedHeight(34)
+        self._drag_start: QPoint | None = None
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.sidebar_button = self._tool_button("[]", "侧栏")
+        self.back_button = self._tool_button("<", "后退")
+        self.forward_button = self._tool_button(">", "前进")
+        self.sidebar_button.clicked.connect(parent_window.toggle_sidebar)
+        self.back_button.clicked.connect(parent_window.navigate_back)
+        self.forward_button.clicked.connect(parent_window.navigate_forward)
+        for button in [self.sidebar_button, self.back_button, self.forward_button]:
+            layout.addWidget(button)
+
+        download_button = self._tool_button("v", "下载")
+        download_button.setObjectName("WindowMenuAccentButton")
+        download_button.clicked.connect(parent_window.open_output_dir)
+        layout.addWidget(download_button)
+        layout.addSpacing(12)
+
+        for text in ["文件", "编辑", "查看", "窗口", "帮助"]:
+            menu_button = QPushButton(text)
+            menu_button.setObjectName("WindowMenuTextButton")
+            menu_button.setFixedHeight(30)
+            menu_button.setMenu(self._build_menu(text))
+            layout.addWidget(menu_button)
+
+        layout.addStretch()
+
+        self.minimize_button = self._window_button("-", "最小化")
+        self.maximize_button = self._window_button("□", "最大化")
+        self.close_button = self._window_button("x", "关闭")
+        self.close_button.setObjectName("WindowCloseButton")
+        self.minimize_button.clicked.connect(parent_window.showMinimized)
+        self.maximize_button.clicked.connect(parent_window.toggle_maximized)
+        self.close_button.clicked.connect(parent_window.close)
+
+        layout.addWidget(self.minimize_button)
+        layout.addWidget(self.maximize_button)
+        layout.addWidget(self.close_button)
+
+    def _tool_button(self, text: str, tooltip: str) -> QPushButton:
+        button = QPushButton(text)
+        button.setObjectName("WindowMenuIconButton")
+        button.setToolTip(tooltip)
+        button.setFixedSize(30, 30)
+        return button
+
+    def _window_button(self, text: str, tooltip: str) -> QPushButton:
+        button = QPushButton(text)
+        button.setObjectName("WindowControlButton")
+        button.setToolTip(tooltip)
+        button.setFixedSize(46, 34)
+        return button
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start = event.globalPosition().toPoint() - self.parent_window.frameGeometry().topLeft()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._drag_start and event.buttons() & Qt.MouseButton.LeftButton:
+            if self.parent_window.isMaximized():
+                self.parent_window.showNormal()
+                self._drag_start = QPoint(self.parent_window.width() // 2, self.height() // 2)
+            self.parent_window.move(event.globalPosition().toPoint() - self._drag_start)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        self._drag_start = None
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.parent_window.toggle_maximized()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def sync_window_state(self) -> None:
+        self.maximize_button.setText("▣" if self.parent_window.isMaximized() else "□")
+        self.back_button.setEnabled(self.parent_window.can_navigate_back())
+        self.forward_button.setEnabled(self.parent_window.can_navigate_forward())
+
+    def _build_menu(self, name: str) -> QMenu:
+        menu = QMenu(self)
+        if name == "文件":
+            self._add_menu_action(menu, "添加文件", self.parent_window.choose_files_from_menu)
+            self._add_menu_action(menu, "打开输出目录", self.parent_window.open_output_dir)
+            menu.addSeparator()
+            self._add_menu_action(menu, "退出", self.parent_window.close)
+        elif name == "编辑":
+            self._add_menu_action(menu, "清空任务队列", self.parent_window.clear_current_files)
+            self._add_menu_action(menu, "设置", self.parent_window.show_settings_dialog)
+        elif name == "查看":
+            self._add_menu_action(menu, "主页", lambda: self.parent_window.switch_page("home"))
+            self._add_menu_action(menu, "智能媒体增强", lambda: self.parent_window.switch_page("super_resolution"))
+            self._add_menu_action(menu, "显示/隐藏侧栏", self.parent_window.toggle_sidebar)
+        elif name == "窗口":
+            self._add_menu_action(menu, "最小化", self.parent_window.showMinimized)
+            self._add_menu_action(menu, "最大化/还原", self.parent_window.toggle_maximized)
+        else:
+            self._add_menu_action(menu, "关于与更新", self.parent_window.open_about_update)
+        return menu
+
+    def _add_menu_action(self, menu: QMenu, text: str, callback) -> None:
+        action = QAction(text, menu)
+        action.triggered.connect(callback)
+        menu.addAction(action)
 
 
 class SettingsContentPage(QWidget):
@@ -311,6 +636,8 @@ class SettingsDialog(QDialog):
         self.page_factories = {}
         self.page_widgets: dict[str, QWidget] = {}
         self._centered_once = False
+        self.save_toast = SettingsSaveToast(self)
+        self.save_toast.hide()
 
         root = QHBoxLayout(self)
         root.setContentsMargins(14, 14, 14, 14)
@@ -424,6 +751,7 @@ class SettingsDialog(QDialog):
         for page in self.page_widgets.values():
             if hasattr(page, "save_settings"):
                 page.save_settings()
+        self.save_toast.show_message()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -459,11 +787,16 @@ class SettingsDialog(QDialog):
             dialog_frame.moveCenter(screen.availableGeometry().center())
             self.move(dialog_frame.topLeft())
 
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self.save_toast.reposition()
+
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} {APP_VERSION}")
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.resize(1360, 860)
         self.thread_pool = QThreadPool.globalInstance()
         self.features = {
@@ -493,6 +826,8 @@ class MainWindow(QMainWindow):
         self.toolbar_subtitle: QLabel | None = None
         self.toolbar_health: QLabel | None = None
         self.toolbar_compact_status: QLabel | None = None
+        self.window_menu_bar: WindowMenuBar | None = None
+        self.sidebar_widget: QWidget | None = None
         self.bottom_panel: QWidget | None = None
         self.background_layer: QFrame | None = None
         self.background_label: QLabel | None = None
@@ -519,9 +854,16 @@ class MainWindow(QMainWindow):
         self.last_failed_files: list[Path] = []
         self.last_failed_feature_key: str | None = None
         self.log_messages: list[str] = []
+        self.task_completion_toast: TaskCompletionToast | None = None
+        self.sidebar_visible = True
+        self.page_history: list[str] = []
+        self.page_history_index = -1
+        self._syncing_page_history = False
 
         self.shell = AppShell()
         self.setCentralWidget(self.shell)
+        self.window_menu_bar = WindowMenuBar(self)
+        self.shell.layout.insertWidget(0, self.window_menu_bar)
         self.background_layer = QFrame(self.shell)
         self.background_layer.setObjectName("PersonalizationBackgroundLayer")
         self.background_layer.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -566,7 +908,8 @@ class MainWindow(QMainWindow):
         content.setSpacing(16)
         self.shell.workspace_layout.addLayout(content, 1)
 
-        content.addWidget(self._build_sidebar())
+        self.sidebar_widget = self._build_sidebar()
+        content.addWidget(self.sidebar_widget)
 
         self.stack = StableStackedWidget()
         self.page_keys: list[str] = []
@@ -585,6 +928,8 @@ class MainWindow(QMainWindow):
 
         self.bottom_panel = self._build_bottom_panel()
         self.shell.body_layout.addWidget(self.bottom_panel)
+        self.task_completion_toast = TaskCompletionToast(self.shell)
+        self.task_completion_toast.hide()
         self.switch_page("home")
         self._set_running(False)
         QTimer.singleShot(0, self._finish_deferred_startup)
@@ -593,6 +938,64 @@ class MainWindow(QMainWindow):
         self._log_tool_health()
         self._apply_personalization()
         self._start_auto_update_check()
+
+    def toggle_maximized(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+        if self.window_menu_bar:
+            self.window_menu_bar.sync_window_state()
+
+    def toggle_sidebar(self) -> None:
+        self.sidebar_visible = not self.sidebar_visible
+        if self.sidebar_widget:
+            self.sidebar_widget.setVisible(self.sidebar_visible)
+
+    def can_navigate_back(self) -> bool:
+        return self.page_history_index > 0
+
+    def can_navigate_forward(self) -> bool:
+        return 0 <= self.page_history_index < len(self.page_history) - 1
+
+    def navigate_back(self) -> None:
+        if not self.can_navigate_back():
+            return
+        self.page_history_index -= 1
+        self._syncing_page_history = True
+        try:
+            self.switch_page(self.page_history[self.page_history_index])
+        finally:
+            self._syncing_page_history = False
+        if self.window_menu_bar:
+            self.window_menu_bar.sync_window_state()
+
+    def navigate_forward(self) -> None:
+        if not self.can_navigate_forward():
+            return
+        self.page_history_index += 1
+        self._syncing_page_history = True
+        try:
+            self.switch_page(self.page_history[self.page_history_index])
+        finally:
+            self._syncing_page_history = False
+        if self.window_menu_bar:
+            self.window_menu_bar.sync_window_state()
+
+    def choose_files_from_menu(self) -> None:
+        if hasattr(self, "file_panel") and self.file_panel.isVisible():
+            self.file_panel.choose_files()
+
+    def clear_current_files(self) -> None:
+        if self.is_running:
+            return
+        if hasattr(self, "file_panel") and self.file_panel.isVisible():
+            self.file_panel.clear_files()
+
+    def open_about_update(self) -> None:
+        self.show_settings_dialog()
+        if self.settings_dialog:
+            self.settings_dialog.switch_page("about_update")
 
     def _build_toolbar(self, toolbar: QFrame) -> None:
         layout = QHBoxLayout(toolbar)
@@ -681,6 +1084,11 @@ class MainWindow(QMainWindow):
     def switch_page(self, key: str) -> None:
         if key not in self.page_keys:
             return
+        if not self._syncing_page_history:
+            if self.page_history_index < 0 or self.page_history[self.page_history_index] != key:
+                self.page_history = self.page_history[: self.page_history_index + 1]
+                self.page_history.append(key)
+                self.page_history_index = len(self.page_history) - 1
         window_geometry = self.geometry()
         window_state = self.windowState()
         self.setUpdatesEnabled(False)
@@ -702,6 +1110,8 @@ class MainWindow(QMainWindow):
                 self.bottom_panel.setVisible(is_processing_page)
             self._notify_file_context_changed()
             self._update_background_layer()
+            if self.window_menu_bar:
+                self.window_menu_bar.sync_window_state()
         finally:
             self.setUpdatesEnabled(True)
             self.setWindowState(window_state)
@@ -832,6 +1242,10 @@ class MainWindow(QMainWindow):
 
     def _task_finished(self, success_count: int, failed_count: int) -> None:
         self._log(f"全部任务完成。成功 {success_count} 个，失败 {failed_count} 个。")
+        self._show_task_completion_toast(
+            "任务完成",
+            f"成功 {success_count} 个，失败 {failed_count} 个。",
+        )
         self.current_task = None
         self._set_running(False)
 
@@ -849,8 +1263,16 @@ class MainWindow(QMainWindow):
                 self._log(f"- {item.source.name}：{item.reason}")
         if self.current_progress_label:
             self.current_progress_label.setText("当前：已完成")
+        self._show_task_completion_toast(
+            "智能媒体增强完成",
+            f"成功 {summary.success_count} 个，失败 {summary.failed_count} 个，跳过 {summary.skipped_count} 个。耗时 {elapsed}。",
+        )
         self.current_task = None
         self._set_running(False)
+
+    def _show_task_completion_toast(self, title: str, message: str) -> None:
+        if self.task_completion_toast:
+            self.task_completion_toast.show_message(title, message)
 
     def _set_running(self, is_running: bool) -> None:
         self.is_running = is_running
@@ -1340,6 +1762,50 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
         self._update_background_layer()
+        if self.task_completion_toast:
+            self.task_completion_toast.reposition()
+        if self.window_menu_bar:
+            self.window_menu_bar.sync_window_state()
+
+    def nativeEvent(self, event_type: bytes | str, message: int) -> tuple[bool, int]:  # noqa: N802
+        if event_type not in (b"windows_generic_MSG", "windows_generic_MSG"):
+            return super().nativeEvent(event_type, message)
+        try:
+            msg = WindowsMessage.from_address(int(message))
+        except (TypeError, ValueError):
+            return super().nativeEvent(event_type, message)
+        if msg.message != WM_NCHITTEST or self.isMaximized() or self.isFullScreen():
+            return super().nativeEvent(event_type, message)
+
+        x = msg.lParam & 0xFFFF
+        y = (msg.lParam >> 16) & 0xFFFF
+        if x >= 0x8000:
+            x -= 0x10000
+        if y >= 0x8000:
+            y -= 0x10000
+        pos = self.mapFromGlobal(QPoint(x, y))
+        left = pos.x() < RESIZE_BORDER_WIDTH
+        right = pos.x() >= self.width() - RESIZE_BORDER_WIDTH
+        top = pos.y() < RESIZE_BORDER_WIDTH
+        bottom = pos.y() >= self.height() - RESIZE_BORDER_WIDTH
+
+        if top and left:
+            return True, HTTOPLEFT
+        if top and right:
+            return True, HTTOPRIGHT
+        if bottom and left:
+            return True, HTBOTTOMLEFT
+        if bottom and right:
+            return True, HTBOTTOMRIGHT
+        if left:
+            return True, HTLEFT
+        if right:
+            return True, HTRIGHT
+        if top:
+            return True, HTTOP
+        if bottom:
+            return True, HTBOTTOM
+        return super().nativeEvent(event_type, message)
 
     def _set_toolbar_compact(self, compact: bool) -> None:
         toolbar_layout = self.shell.toolbar.layout()

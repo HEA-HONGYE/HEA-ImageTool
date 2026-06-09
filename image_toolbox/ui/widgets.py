@@ -101,11 +101,17 @@ class AppShell(QWidget):
         super().__init__()
         self.setObjectName("AppShell")
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(24, 20, 24, 24)
-        self.layout.setSpacing(16)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
+
+        self.content = QWidget()
+        self.content.setObjectName("AppContent")
+        self.content_layout = QVBoxLayout(self.content)
+        self.content_layout.setContentsMargins(24, 20, 24, 24)
+        self.content_layout.setSpacing(16)
 
         self.toolbar = GlassToolbar()
-        self.layout.addWidget(self.toolbar)
+        self.content_layout.addWidget(self.toolbar)
 
         self.body = QFrame()
         self.body.setObjectName("AppShellBody")
@@ -120,4 +126,5 @@ class AppShell(QWidget):
         self.workspace_layout.setSpacing(16)
         self.body_layout.addWidget(self.workspace, 1)
 
-        self.layout.addWidget(self.body, 1)
+        self.content_layout.addWidget(self.body, 1)
+        self.layout.addWidget(self.content, 1)

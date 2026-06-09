@@ -67,6 +67,113 @@ QWidget {{
     color: {TOKENS.text};
 }}
 
+QWidget#AppContent {{
+    background: {TOKENS.background};
+}}
+
+QFrame#WindowMenuBar {{
+    background: #F2F2F2;
+    border: 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 18);
+}}
+
+QPushButton#WindowMenuIconButton,
+QPushButton#WindowMenuAccentButton {{
+    border: 0;
+    border-radius: 14px;
+    background: transparent;
+    color: #80868D;
+    font-size: 15px;
+    font-weight: 650;
+    padding: 0;
+}}
+
+QPushButton#WindowMenuIconButton:hover {{
+    background: rgba(0, 0, 0, 22);
+    color: #4D5660;
+}}
+
+QPushButton#WindowMenuIconButton:disabled {{
+    background: transparent;
+    color: rgba(128, 134, 141, 86);
+}}
+
+QPushButton#WindowMenuAccentButton {{
+    background: #339CFF;
+    color: #FFFFFF;
+    font-size: 15px;
+    font-weight: 720;
+}}
+
+QPushButton#WindowMenuAccentButton:hover {{
+    background: #1F8EF5;
+}}
+
+QPushButton#WindowMenuTextButton {{
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #73787F;
+    font-size: 14px;
+    padding: 0 12px;
+    text-align: center;
+}}
+
+QPushButton#WindowMenuTextButton:hover {{
+    background: rgba(0, 0, 0, 20);
+    color: #343A42;
+}}
+
+QPushButton#WindowMenuTextButton::menu-indicator {{
+    image: none;
+    width: 0;
+}}
+
+QPushButton#WindowControlButton,
+QPushButton#WindowCloseButton {{
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: #111827;
+    font-size: 15px;
+    padding: 0;
+}}
+
+QPushButton#WindowControlButton:hover {{
+    background: rgba(0, 0, 0, 22);
+}}
+
+QPushButton#WindowCloseButton:hover {{
+    background: #E81123;
+    color: #FFFFFF;
+}}
+
+QMenu {{
+    background: rgba(255, 255, 255, 248);
+    border: 1px solid rgba(118, 134, 159, 55);
+    border-radius: 8px;
+    padding: 6px;
+    color: #343A42;
+}}
+
+QMenu::item {{
+    min-width: 132px;
+    padding: 7px 26px 7px 12px;
+    border-radius: 6px;
+    background: transparent;
+}}
+
+QMenu::item:selected {{
+    background: #E8F2FF;
+    color: #0F3575;
+}}
+
+QMenu::separator {{
+    height: 1px;
+    background: rgba(118, 134, 159, 46);
+    margin: 5px 8px;
+}}
+
 QFrame#AppShellBody, QFrame#AppWorkspace {{
     background: transparent;
     border: 0;
@@ -100,6 +207,58 @@ QFrame#BottomPanel, QFrame#GlassStatusBar {{
 
 QFrame#GlassStatusBar {{
     background: rgba(255, 255, 255, 235);
+}}
+
+QFrame#TaskCompletionToast {{
+    background: rgba(255, 255, 255, 245);
+    border: 1px solid rgba(47, 125, 246, 58);
+    border-radius: 18px;
+}}
+
+QLabel#TaskCompletionToastIcon {{
+    background: #28A86B;
+    border-radius: 17px;
+    color: #FFFFFF;
+    font-size: 18px;
+    font-weight: 800;
+}}
+
+QLabel#TaskCompletionToastTitle {{
+    color: #111827;
+    font-size: 14px;
+    font-weight: 760;
+}}
+
+QLabel#TaskCompletionToastMessage {{
+    color: #667085;
+    font-size: 12px;
+    font-weight: 500;
+}}
+
+QFrame#SettingsSaveToast {{
+    background: rgba(255, 255, 255, 246);
+    border: 1px solid rgba(40, 168, 107, 72);
+    border-radius: 16px;
+}}
+
+QLabel#SettingsSaveToastIcon {{
+    background: #28A86B;
+    border-radius: 12px;
+    color: #FFFFFF;
+    font-size: 15px;
+    font-weight: 800;
+}}
+
+QLabel#SettingsSaveToastTitle {{
+    color: #111827;
+    font-size: 13px;
+    font-weight: 760;
+}}
+
+QLabel#SettingsSaveToastMessage {{
+    color: #667085;
+    font-size: 12px;
+    font-weight: 500;
 }}
 
 QWidget#LiquidHome {{
@@ -182,11 +341,22 @@ QPushButton {{
 
 QPushButton:hover {{
     background: #1F6DF0;
+    border-color: rgba(47, 125, 246, 120);
+}}
+
+QPushButton:pressed {{
+    background: #185BD4;
+    border-color: rgba(20, 91, 212, 160);
+}}
+
+QPushButton:focus {{
+    border: 1px solid rgba(47, 125, 246, 170);
 }}
 
 QPushButton:disabled {{
     background: rgba(224, 231, 242, 180);
     color: #98A2B3;
+    border-color: rgba(118, 134, 159, 35);
 }}
 
 QPushButton#GhostButton,
@@ -198,7 +368,22 @@ QPushButton#LiquidPillButton {{
 
 QPushButton#GhostButton:hover,
 QPushButton#LiquidPillButton:hover {{
-    background: #F8FAFD;
+    background: #E8F2FF;
+    border-color: rgba(47, 125, 246, 115);
+    color: #0F3575;
+}}
+
+QPushButton#GhostButton:pressed,
+QPushButton#LiquidPillButton:pressed {{
+    background: #D8EAFE;
+    border-color: rgba(47, 125, 246, 150);
+    color: #0B2F6F;
+}}
+
+QPushButton#GhostButton:focus,
+QPushButton#LiquidPillButton:focus {{
+    background: #F4F9FF;
+    border-color: rgba(47, 125, 246, 160);
 }}
 
 QPushButton#BottomActionButton {{
@@ -212,8 +397,20 @@ QPushButton#BottomActionButton {{
 }}
 
 QPushButton#BottomActionButton:hover {{
-    background: #F8FAFD;
-    border-color: rgba(47, 125, 246, 80);
+    background: #E8F2FF;
+    border-color: rgba(47, 125, 246, 115);
+    color: #0F3575;
+}}
+
+QPushButton#BottomActionButton:pressed {{
+    background: #D8EAFE;
+    border-color: rgba(47, 125, 246, 150);
+    color: #0B2F6F;
+}}
+
+QPushButton#BottomActionButton:focus {{
+    background: #F4F9FF;
+    border-color: rgba(47, 125, 246, 160);
 }}
 
 QPushButton#LiquidPillButton[variant="primary"] {{
@@ -245,6 +442,12 @@ QPushButton#NavButton:hover {{
     color: #0F3575;
 }}
 
+QPushButton#NavButton:pressed {{
+    background: rgba(216, 234, 254, 235);
+    border-color: rgba(47, 125, 246, 130);
+    color: #0B2F6F;
+}}
+
 QPushButton#NavButton:checked {{
     background: rgba(47, 125, 246, 225);
     border-color: rgba(47, 125, 246, 120);
@@ -272,7 +475,7 @@ QGroupBox::title {{
     color: {TOKENS.text};
 }}
 
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QListWidget {{
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QListWidget, QTableWidget {{
     background: #FFFFFF;
     border: 1px solid {TOKENS.border_soft};
     border-radius: {TOKENS.radius_input}px;
@@ -281,13 +484,39 @@ QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QListWidget {{
     selection-background-color: #CCE0FF;
 }}
 
+QLineEdit:hover,
+QSpinBox:hover,
+QDoubleSpinBox:hover,
+QTextEdit:hover,
+QListWidget:hover,
+QTableWidget:hover {{
+    background: #F8FBFF;
+    border-color: rgba(47, 125, 246, 95);
+}}
+
+QLineEdit:focus,
+QComboBox:focus,
+QSpinBox:focus,
+QDoubleSpinBox:focus,
+QTextEdit:focus,
+QListWidget:focus,
+QTableWidget:focus {{
+    background: #FFFFFF;
+    border-color: rgba(47, 125, 246, 165);
+}}
+
 QComboBox {{
     padding-right: 34px;
 }}
 
 QComboBox:hover {{
-    background: #F8FAFD;
-    border-color: rgba(47, 125, 246, 90);
+    background: #F8FBFF;
+    border-color: rgba(47, 125, 246, 110);
+}}
+
+QComboBox:on {{
+    background: #E8F2FF;
+    border-color: rgba(47, 125, 246, 150);
 }}
 
 QComboBox::drop-down {{
@@ -409,6 +638,51 @@ QCheckBox {{
     spacing: 8px;
 }}
 
+QCheckBox:hover,
+QRadioButton:hover {{
+    color: #0F3575;
+}}
+
+QCheckBox::indicator,
+QRadioButton::indicator {{
+    width: 18px;
+    height: 18px;
+    border: 1px solid rgba(118, 134, 159, 90);
+    background: rgba(255, 255, 255, 210);
+}}
+
+QCheckBox::indicator {{
+    border-radius: 5px;
+}}
+
+QRadioButton::indicator {{
+    border-radius: 9px;
+}}
+
+QCheckBox::indicator:hover,
+QRadioButton::indicator:hover {{
+    border-color: rgba(47, 125, 246, 150);
+    background: #E8F2FF;
+}}
+
+QCheckBox::indicator:checked,
+QRadioButton::indicator:checked {{
+    border-color: rgba(47, 125, 246, 180);
+    background: #2F7DF6;
+}}
+
+QCheckBox::indicator:pressed,
+QRadioButton::indicator:pressed {{
+    border-color: rgba(47, 125, 246, 190);
+    background: #D8EAFE;
+}}
+
+QCheckBox::indicator:disabled,
+QRadioButton::indicator:disabled {{
+    border-color: rgba(118, 134, 159, 45);
+    background: rgba(224, 231, 242, 150);
+}}
+
 QListWidget {{
     outline: 0;
 }}
@@ -489,9 +763,23 @@ QSlider::groove:horizontal {{
 
 QSlider::handle:horizontal {{
     background: {TOKENS.accent};
+    border: 1px solid rgba(255, 255, 255, 180);
     width: 16px;
     margin: -6px 0;
     border-radius: 8px;
+}}
+
+QSlider::handle:horizontal:hover {{
+    background: #1F6DF0;
+    border-color: rgba(232, 242, 255, 240);
+}}
+
+QSlider::handle:horizontal:pressed {{
+    background: #185BD4;
+}}
+
+QSlider::groove:horizontal:hover {{
+    background: rgba(198, 222, 255, 230);
 }}
 
 QFrame#LiquidGlassCard {{
