@@ -16,7 +16,7 @@ from image_toolbox import APP_NAME, APP_VERSION
 
 
 DEFAULT_UPDATE_MANIFEST_URLS = (
-    "https://gitee.com/HEA-HONGYE/HEA-ImageTool/raw/main/versions.json",
+    "https://gitee.com/red-night-hea/hea-image-tool/raw/main/versions.json",
     "https://raw.githubusercontent.com/HEA-HONGYE/HEA-ImageTool/main/versions.json",
 )
 DEFAULT_UPDATE_MANIFEST_URL = DEFAULT_UPDATE_MANIFEST_URLS[0]
