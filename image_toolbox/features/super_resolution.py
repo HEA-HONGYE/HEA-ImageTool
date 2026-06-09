@@ -164,6 +164,7 @@ class SuperResolutionFeature(ToolFeature):
         self._statuses: list[str] = []
         self._selected_file: Path | None = None
         self._recent_logs: list[str] = []
+        self._file_info_cache: dict[tuple[str, int, int, int, bool], tuple[str, str, str]] = {}
 
     def build_panel(self) -> QWidget:
         panel = QWidget()
@@ -1064,7 +1065,18 @@ class SuperResolutionFeature(ToolFeature):
         self._syncing_external_file_panel = True
         try:
             if hasattr(self.external_file_panel, "set_files"):
-                self.external_file_panel.set_files(self._files, self._statuses)
+                panel_files = list(getattr(self.external_file_panel, "files", []))
+                same_files = len(panel_files) == len(self._files) and all(
+                    str(left).casefold() == str(right).casefold()
+                    for left, right in zip(panel_files, self._files)
+                )
+                if same_files and hasattr(self.external_file_panel, "set_file_status"):
+                    panel_statuses = list(getattr(self.external_file_panel, "statuses", []))
+                    for index, status in enumerate(self._statuses):
+                        if index >= len(panel_statuses) or panel_statuses[index] != status:
+                            self.external_file_panel.set_file_status(index, status)
+                else:
+                    self.external_file_panel.set_files(self._files, self._statuses)
         finally:
             self._syncing_external_file_panel = False
 
@@ -1093,6 +1105,7 @@ class SuperResolutionFeature(ToolFeature):
         self._files.clear()
         self._statuses.clear()
         self._selected_file = None
+        self._file_info_cache.clear()
         self._refresh_file_table()
         self._sync_external_file_panel()
         window = self.window()
@@ -1105,6 +1118,8 @@ class SuperResolutionFeature(ToolFeature):
         row = self.file_table.currentRow()
         if row < 0 or row >= len(self._files):
             return
+        removed = self._files[row]
+        self._drop_file_info_cache(removed)
         del self._files[row]
         del self._statuses[row]
         self._selected_file = self._files[0] if self._files else None
@@ -1121,7 +1136,17 @@ class SuperResolutionFeature(ToolFeature):
     def set_file_status(self, index: int, status: str) -> None:
         if 0 <= index < len(self._statuses):
             self._statuses[index] = status
-            self._refresh_file_table(keep_selection=True)
+            if self.file_table and index < self.file_table.rowCount():
+                item = self.file_table.item(index, 2)
+                if item is None:
+                    item = QTableWidgetItem(status)
+                    self.file_table.setItem(index, 2, item)
+                else:
+                    item.setText(status)
+                self._refresh_task_center_stats()
+                self._update_preview()
+            else:
+                self._refresh_file_table(keep_selection=True)
             self._sync_external_file_panel()
 
     def _refresh_file_table(self, keep_selection: bool = False) -> None:
@@ -1137,9 +1162,7 @@ class SuperResolutionFeature(ToolFeature):
         scale = self.scale_combo.currentData() if self.scale_combo else 4
         for row, path in enumerate(self._files):
             self.file_table.insertRow(row)
-            media_type = self._media_type(path)
-            original_size = self._read_size_text(path)
-            output_size = self._output_size_text(path, scale)
+            media_type, original_size, output_size = self._file_table_info(path, scale)
             values = [path.name, media_type, self._statuses[row], original_size, output_size, str(path)]
             for col, value in enumerate(values):
                 self.file_table.setItem(row, col, QTableWidgetItem(value))
@@ -1150,6 +1173,31 @@ class SuperResolutionFeature(ToolFeature):
         self._refresh_task_center_stats()
         self._selected_file = self._files[self.file_table.currentRow()] if self._files and self.file_table.currentRow() >= 0 else (self._files[0] if self._files else None)
         self._update_preview()
+
+    def _file_cache_key(self, path: Path, scale: int) -> tuple[str, int, int, int, bool]:
+        animated_upscale = bool(self.upscale_enabled_checkbox and self.upscale_enabled_checkbox.isChecked())
+        try:
+            stat = path.stat()
+            return (str(path.resolve()), int(stat.st_mtime_ns), int(stat.st_size), int(scale), animated_upscale)
+        except OSError:
+            return (str(path.resolve()), 0, 0, int(scale), animated_upscale)
+
+    def _drop_file_info_cache(self, path: Path) -> None:
+        path_text = str(path.resolve())
+        for cache_key in [key for key in self._file_info_cache if key[0] == path_text]:
+            self._file_info_cache.pop(cache_key, None)
+
+    def _file_table_info(self, path: Path, scale: int) -> tuple[str, str, str]:
+        cache_key = self._file_cache_key(path, scale)
+        cached = self._file_info_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        media_type = self._media_type(path)
+        original_size = self._read_size_text(path)
+        output_size = self._output_size_text(path, scale)
+        value = (media_type, original_size, output_size)
+        self._file_info_cache[cache_key] = value
+        return value
 
     def _refresh_task_center_stats(self) -> None:
         waiting = sum(1 for status in self._statuses if "待" in status or "等待" in status)
@@ -1179,9 +1227,8 @@ class SuperResolutionFeature(ToolFeature):
         self.engine_combo.blockSignals(True)
         self.engine_combo.clear()
         for engine in DEFAULT_ENGINE_MANAGER.list_enabled_engines():
-            info = engine.get_info()
             label = info.display_name if info.available else f"{info.display_name}（不可用）"
-            self.engine_combo.addItem(label, info.engine_id)
+            self.engine_combo.addItem(engine.display_name, engine.engine_id)
         index = self.engine_combo.findData(current_engine)
         self.engine_combo.setCurrentIndex(index if index >= 0 else 0)
         self.engine_combo.blockSignals(False)
@@ -1494,6 +1541,96 @@ class SuperResolutionFeature(ToolFeature):
             status = "当前引擎没有可用模型，请到引擎设置中迁移或导入模型"
         if self.engine_info_label:
             self.engine_info_label.setText(f"{status}：{info.display_name}\n{info.description}")
+        self._on_format_changed()
+
+    def refresh_from_engine_settings(self) -> None:
+        if not self.engine_combo:
+            return
+        current_engine = self.engine_combo.currentData() or self.engine_settings_store.global_settings.default_image_engine or self.config.get("engine_id", "realesrgan")
+        self.engine_combo.blockSignals(True)
+        self.engine_combo.clear()
+        for engine in DEFAULT_ENGINE_MANAGER.list_enabled_engines():
+            self.engine_combo.addItem(engine.display_name, engine.engine_id)
+        index = self.engine_combo.findData(current_engine)
+        self.engine_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.engine_combo.blockSignals(False)
+        self._refresh_engine_options()
+
+    def _refresh_engine_options(self) -> None:
+        if not self.engine_combo or not self.model_combo or not self.scale_combo or not self.format_combo:
+            return
+        if self.engine_combo.count() == 0:
+            if self.engine_info_label:
+                self.engine_info_label.setText("No enabled enhancement engines.")
+            return
+        engine_id = self.engine_combo.currentData() or "realesrgan"
+        engine = DEFAULT_ENGINE_MANAGER.get_engine(engine_id)
+        engine_settings = self.engine_settings_store.get_engine(engine_id)
+
+        models = [model for model in engine.get_model_info() if is_model_enabled(engine_id, model.name)]
+        saved_model = engine_settings.default_model or self.config.get("model_name", models[0].name if models else "")
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        for model in models:
+            self.model_combo.addItem(model.display_name, model.name)
+        self.model_combo.setCurrentIndex(max(0, self.model_combo.findData(saved_model)))
+        self.model_combo.blockSignals(False)
+
+        saved_scale = engine_settings.default_scale or self.config.get("scale", engine.supported_scales[-1], int)
+        self.scale_combo.blockSignals(True)
+        self.scale_combo.clear()
+        for scale in engine.supported_scales:
+            self.scale_combo.addItem(f"{scale}x", scale)
+        self.scale_combo.setCurrentIndex(max(0, self.scale_combo.findData(saved_scale)))
+        self.scale_combo.blockSignals(False)
+
+        saved_format = engine_settings.default_output_format or self.config.get("format", "original")
+        self.format_combo.blockSignals(True)
+        self.format_combo.clear()
+        self.format_combo.addItem("Original", "original")
+        for fmt in engine.supported_formats:
+            self.format_combo.addItem(fmt.upper(), fmt)
+        self.format_combo.setCurrentIndex(max(0, self.format_combo.findData(saved_format)))
+        self.format_combo.blockSignals(False)
+
+        if self.tile_spin:
+            self.tile_spin.setEnabled(engine.supports_tile)
+            self.tile_spin.setValue(engine_settings.default_tile)
+        if self.low_memory_checkbox:
+            self.low_memory_checkbox.setEnabled(engine.supports_tile)
+            self.low_memory_checkbox.setChecked(engine_settings.low_memory_default)
+        if self.tta_checkbox:
+            self.tta_checkbox.setChecked(bool(engine_settings.extra_params.get("use_tta", False)))
+        if self.gpu_edit:
+            self.gpu_edit.setText(str(engine_settings.extra_params.get("gpu_id", self.engine_settings_store.global_settings.gpu_id)))
+        if self.noise_combo:
+            self.noise_combo.blockSignals(True)
+            self.noise_combo.clear()
+            noise_options = engine.get_noise_options()
+            for option in noise_options:
+                self.noise_combo.addItem(option.label, option.value)
+            saved_noise = engine_settings.default_noise_level if engine.supports_noise else 0
+            self.noise_combo.setCurrentIndex(max(0, self.noise_combo.findData(saved_noise)))
+            self.noise_combo.setEnabled(bool(noise_options) and getattr(engine, "supports_noise", False))
+            self.noise_combo.blockSignals(False)
+        if self.syncgap_combo:
+            self.syncgap_combo.blockSignals(True)
+            self.syncgap_combo.clear()
+            syncgap_options = engine.get_syncgap_options()
+            for option in syncgap_options:
+                self.syncgap_combo.addItem(option.label, option.value)
+            saved_syncgap = engine_settings.syncgap_mode if engine.supports_syncgap else 2
+            self.syncgap_combo.setCurrentIndex(max(0, self.syncgap_combo.findData(saved_syncgap)))
+            self.syncgap_combo.setEnabled(bool(syncgap_options) and getattr(engine, "supports_syncgap", False))
+            self.syncgap_combo.blockSignals(False)
+
+        status = "Ready"
+        if not is_engine_enabled(engine_id):
+            status = "Disabled"
+        elif not models:
+            status = "No enabled models"
+        if self.engine_info_label:
+            self.engine_info_label.setText(f"{status}: {engine.display_name}\n{engine.description}")
         self._on_format_changed()
 
     def _apply_selected_preset(self, *_args: object) -> None:

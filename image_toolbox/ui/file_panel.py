@@ -114,11 +114,15 @@ class FilePanel(QFrame):
         if len(self.statuses) < len(self.files):
             self.statuses.extend(["待处理"] * (len(self.files) - len(self.statuses)))
         self.statuses = self.statuses[: len(self.files)]
-        self.list_widget.clear()
-        for path, status in zip(self.files, self.statuses):
-            self._append_task_item(path, status)
-        if self.files:
-            self.list_widget.setCurrentRow(0)
+        previous_blocked = self.list_widget.blockSignals(True)
+        try:
+            self.list_widget.clear()
+            for path, status in zip(self.files, self.statuses):
+                self._append_task_item(path, status)
+            if self.files:
+                self.list_widget.setCurrentRow(0)
+        finally:
+            self.list_widget.blockSignals(previous_blocked)
         self._update_info(self.list_widget.currentRow())
         self._refresh_summary()
         if emit_changed:
@@ -144,9 +148,11 @@ class FilePanel(QFrame):
         if item is None:
             item = QListWidgetItem()
             self.list_widget.insertItem(index, item)
-        item.setText("")
-        item.setSizeHint(QSize(0, 68))
-        self.list_widget.setItemWidget(item, self._build_task_item_widget(self.files[index], status))
+        widget = self.list_widget.itemWidget(item)
+        if not self._update_task_item_widget(widget, status):
+            item.setText("")
+            item.setSizeHint(QSize(0, 68))
+            self.list_widget.setItemWidget(item, self._build_task_item_widget(self.files[index], status))
         if self.list_widget.currentRow() == index:
             self._update_info(index)
         self._refresh_summary()
@@ -199,6 +205,19 @@ class FilePanel(QFrame):
         text_col.addWidget(progress)
         layout.addLayout(text_col, 1)
         return row
+
+    def _update_task_item_widget(self, widget: QWidget | None, status: str) -> bool:
+        if widget is None:
+            return False
+        status_label = widget.findChild(QLabel, "TaskStatus")
+        progress = widget.findChild(QProgressBar, "TaskMiniProgress")
+        if status_label is None and progress is None:
+            return False
+        if status_label is not None:
+            status_label.setText(status)
+        if progress is not None:
+            progress.setValue(self._status_progress(status))
+        return True
 
     def _status_progress(self, status: str) -> int:
         if "待" in status or "等待" in status:

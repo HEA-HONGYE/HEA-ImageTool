@@ -14,6 +14,8 @@ from image_toolbox.core.config import AppConfig
 from image_toolbox.core.super_resolution import SuperResolutionSummary
 from image_toolbox.core.tasks import ImageBatchTask
 from image_toolbox.core.tool_manager import get_tool_manager
+from image_toolbox.core.updater import DEFAULT_UPDATE_MANIFEST_URLS, UpdateCheckTask, UpdateInfo, parse_url_list
+from image_toolbox.features.about_update import AboutUpdatePanel
 from image_toolbox.features.compression import CompressionFeature
 from image_toolbox.features.conversion import ConversionFeature
 from image_toolbox.features.engine_settings import EngineSettingsPanel
@@ -296,9 +298,10 @@ class PersonalizationPanel(QWidget):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None, personalization_callback=None) -> None:
+    def __init__(self, parent: QWidget | None = None, personalization_callback=None, update_callback=None) -> None:
         super().__init__(parent)
         self.personalization_callback = personalization_callback or (lambda: None)
+        self.update_callback = update_callback or (lambda _info: None)
         self.setObjectName("AppShell")
         self.setWindowTitle("设置")
         self.setWindowFlag(Qt.Window, True)
@@ -334,6 +337,7 @@ class SettingsDialog(QDialog):
         self._add_settings_page("engine_video", lambda: EngineSettingsPanel("video"))
         self._add_settings_page("tool_settings", lambda: SettingsContentPage(ToolSettingsPanel()))
         self._add_settings_page("personalization", lambda: SettingsContentPage(PersonalizationPanel(self.personalization_callback)))
+        self._add_settings_page("about_update", self._build_about_update_page)
 
         self._add_nav_group_label(side_layout, "引擎设置")
         self._add_settings_nav(side_layout, "engine_base", "基础配置")
@@ -345,6 +349,9 @@ class SettingsDialog(QDialog):
         side_layout.addSpacing(8)
         self._add_nav_group_label(side_layout, "外观")
         self._add_settings_nav(side_layout, "personalization", "个性化")
+        side_layout.addSpacing(8)
+        self._add_nav_group_label(side_layout, "应用")
+        self._add_settings_nav(side_layout, "about_update", "关于与更新")
         side_layout.addStretch()
 
         save_button = QPushButton("保存设置")
@@ -366,6 +373,11 @@ class SettingsDialog(QDialog):
         self.page_factories[key] = page_factory
         self.page_widgets[key] = placeholder
         self.stack.addWidget(placeholder)
+
+    def _build_about_update_page(self) -> QWidget:
+        panel = AboutUpdatePanel()
+        panel.update_checked.connect(self.update_callback)
+        return SettingsContentPage(panel)
 
     def _add_nav_group_label(self, layout: QVBoxLayout, text: str) -> None:
         label = QLabel(text)
@@ -502,6 +514,8 @@ class MainWindow(QMainWindow):
         self.combo_paused_background_video = False
         self.combo_popup_pause_count = 0
         self.current_task: ImageBatchTask | None = None
+        self.update_check_task: UpdateCheckTask | None = None
+        self.latest_update_info: UpdateInfo | None = None
         self.last_failed_files: list[Path] = []
         self.last_failed_feature_key: str | None = None
         self.log_messages: list[str] = []
@@ -573,8 +587,12 @@ class MainWindow(QMainWindow):
         self.shell.body_layout.addWidget(self.bottom_panel)
         self.switch_page("home")
         self._set_running(False)
+        QTimer.singleShot(0, self._finish_deferred_startup)
+
+    def _finish_deferred_startup(self) -> None:
         self._log_tool_health()
         self._apply_personalization()
+        self._start_auto_update_check()
 
     def _build_toolbar(self, toolbar: QFrame) -> None:
         layout = QHBoxLayout(toolbar)
@@ -875,13 +893,52 @@ class MainWindow(QMainWindow):
         self._log(message)
 
     def _log_tool_health(self) -> None:
-        health_map = get_tool_manager().refresh()
+        health_map = get_tool_manager().refresh(read_versions=False)
         for tool_id in ["ffmpeg", "ffprobe", "rife"]:
             health = health_map[tool_id]
             if health.available and health.path:
                 self._log(f"检测到 {health.display_name}：{health.path}")
             else:
                 self._log(f"未检测到 {health.display_name}：请到工具管理中配置或导入。")
+
+    def _start_auto_update_check(self) -> None:
+        config = AppConfig("updates")
+        if not config.get("auto_check", True, bool):
+            return
+        saved_urls = config.get("manifest_urls", "", str) or config.get("manifest_url", "", str)
+        manifest_urls = parse_url_list(saved_urls) or list(DEFAULT_UPDATE_MANIFEST_URLS)
+        self.update_check_task = UpdateCheckTask(manifest_urls)
+        self.update_check_task.signals.finished.connect(lambda info: self._handle_update_checked(info, True))
+        self.update_check_task.signals.failed.connect(self._handle_auto_update_failed)
+        self.thread_pool.start(self.update_check_task)
+
+    def _handle_auto_update_failed(self, message: str) -> None:
+        self.update_check_task = None
+        self._log(f"自动检查更新失败：{message}")
+
+    def _handle_update_checked(self, info: UpdateInfo, from_auto_check: bool = False) -> None:
+        self.update_check_task = None
+        self.latest_update_info = info
+        if info.has_update:
+            self._log(f"发现新版本：v{info.latest_version}（当前 v{info.current_version}）。")
+            if self.status_label:
+                self.status_label.setText(f"状态：发现新版本 v{info.latest_version}")
+            if from_auto_check:
+                self._prompt_open_update(info)
+            return
+        if not from_auto_check:
+            self._log(f"当前已是最新版本：v{info.current_version}。")
+
+    def _prompt_open_update(self, info: UpdateInfo) -> None:
+        choice = QMessageBox.question(
+            self,
+            "发现新版本",
+            f"发现 {APP_NAME} v{info.latest_version}，当前版本 v{info.current_version}。是否打开发布页查看更新？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if choice == QMessageBox.StandardButton.Yes and info.release_url:
+            QDesktopServices.openUrl(QUrl(info.release_url))
 
     def _build_bottom_panel(self) -> QWidget:
         panel = GlassStatusBar()
@@ -999,7 +1056,7 @@ class MainWindow(QMainWindow):
             self.settings_dialog.activateWindow()
             return
         self.settings_paused_background_video = self._pause_background_video_for_settings()
-        dialog = SettingsDialog(self, self._apply_personalization)
+        dialog = SettingsDialog(self, self._apply_personalization, self._handle_update_checked)
         self.settings_dialog = dialog
 
         def reset_settings_dialog(_result: int) -> None:

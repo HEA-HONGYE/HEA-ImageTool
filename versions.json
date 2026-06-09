@@ -1,5 +1,10 @@
 {
   "name": "HEA",
   "version": "4.1.7",
-  "module": "image_toolbox"
+  "module": "image_toolbox",
+  "title": "HEA v4.1.7",
+  "release_url": "https://github.com/HEA-HONGYE/HEA-ImageTool/releases/latest",
+  "download_url": "",
+  "download_urls": [],
+  "notes": "当前版本。发布新版本时，将 version 改为新版号，并把 download_url 指向新版安装包。"
 }

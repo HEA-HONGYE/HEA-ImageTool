@@ -7,6 +7,7 @@ from pathlib import Path
 from image_toolbox.core.engine_settings import resolve_executable_path, resolve_model_root
 from image_toolbox.core.paths import get_engine_models_dir, get_project_root
 from image_toolbox.core.upscale_engines.base import BaseUpscaleEngine
+from image_toolbox.core.upscale_engines.model_paths import ensure_named_model_dir
 from image_toolbox.core.upscale_engines.types import (
     ENGINE_NOT_FOUND,
     GPU_MEMORY_ERROR,
@@ -35,6 +36,13 @@ MODEL_ALIASES = {
     "upconv_7": "upconv_7",
     "anime_style_art_rgb": "anime_style_art_rgb",
     "anime_style_art": "anime_style_art_rgb",
+}
+
+MODEL_RUNTIME_DIRS = {
+    "cunet": "models-cunet",
+    "upconv_7": "models-upconv_7_photo",
+    "anime_style_art_rgb": "models-upconv_7_anime_style_art_rgb",
+    "anime_style_art": "models-upconv_7_anime_style_art_rgb",
 }
 
 
@@ -68,6 +76,16 @@ class Waifu2xEngine(BaseUpscaleEngine):
 
     def _model_dir(self, model_name: str) -> Path:
         return self.models_path / MODEL_ALIASES.get(model_name, model_name)
+
+    def _runtime_model_dir(self, model_name: str) -> Path:
+        model_dir = self._model_dir(model_name)
+        required_name = MODEL_RUNTIME_DIRS.get(model_name)
+        if required_name is None or model_name.startswith("custom/"):
+            return model_dir
+        native_dir = self.models_path / required_name
+        if native_dir.exists():
+            return native_dir
+        return ensure_named_model_dir(model_dir, required_name, self.engine_id)
 
     def validate_config(self, config: UpscaleConfig) -> None:
         if not self.executable_path.exists():
@@ -104,7 +122,7 @@ class Waifu2xEngine(BaseUpscaleEngine):
             "-t",
             str(config.tile_size if config.tile_mode == "manual" else self.get_default_tile(config.low_memory_mode)),
             "-m",
-            str(self._model_dir(config.model_name).resolve()),
+            str(self._runtime_model_dir(config.model_name).resolve()),
             "-g",
             config.gpu_id.strip() or "auto",
             "-j",

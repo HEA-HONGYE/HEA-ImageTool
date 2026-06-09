@@ -17,6 +17,14 @@ def get_assets_dir() -> Path:
     return get_project_root() / "assets"
 
 
+def get_app_icon_path() -> Path:
+    return get_assets_dir() / "icons" / "hea.ico"
+
+
+def get_app_icon_image_path() -> Path:
+    return get_assets_dir() / "icons" / "hea-icon.png"
+
+
 def get_models_root() -> Path:
     return get_assets_dir() / "models"
 

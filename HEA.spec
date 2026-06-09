@@ -86,6 +86,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='assets\\icons\\hea.ico',
 )
 coll = COLLECT(
     exe,

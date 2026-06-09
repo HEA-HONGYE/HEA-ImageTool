@@ -7,6 +7,7 @@ from pathlib import Path
 from image_toolbox.core.engine_settings import resolve_executable_path, resolve_model_root
 from image_toolbox.core.paths import get_engine_models_dir, get_project_root
 from image_toolbox.core.upscale_engines.base import BaseUpscaleEngine
+from image_toolbox.core.upscale_engines.model_paths import ensure_named_model_dir
 from image_toolbox.core.upscale_engines.types import (
     ENGINE_NOT_FOUND,
     GPU_MEMORY_ERROR,
@@ -66,6 +67,13 @@ class SrmdEngine(BaseUpscaleEngine):
             return nested
         return self.models_path
 
+    def _runtime_model_root(self, model_name: str) -> Path:
+        model_root = self._model_root(model_name)
+        native_root = self.models_path / "models-srmd"
+        if native_root.exists():
+            return native_root
+        return ensure_named_model_dir(model_root, "models-srmd", self.engine_id)
+
     def validate_config(self, config: UpscaleConfig) -> None:
         if not self.executable_path.exists():
             raise FileNotFoundError(f"{ENGINE_NOT_FOUND}：找不到 SRMD 可执行文件：{SRMD_EXE}")
@@ -103,7 +111,7 @@ class SrmdEngine(BaseUpscaleEngine):
             "-t",
             str(config.tile_size if config.tile_mode == "manual" else self.get_default_tile(config.low_memory_mode)),
             "-m",
-            str(self._model_root(config.model_name).resolve()),
+            str(self._runtime_model_root(config.model_name).resolve()),
             "-g",
             config.gpu_id.strip() or "auto",
             "-j",

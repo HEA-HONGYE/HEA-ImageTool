@@ -89,16 +89,20 @@ class ToolManager:
         self.config = AppConfig("media_tools")
         self.health: dict[str, ToolHealth] = {}
         self.ensure_tool_dirs()
-        self.refresh()
+        self.health = {tool_id: self.check_tool(tool_id, read_version=False) for tool_id in TOOL_DEFINITIONS}
 
     @property
     def tools_root(self) -> Path:
         return get_project_root() / "tools"
 
     def ensure_tool_dirs(self) -> None:
-        self.tools_root.mkdir(parents=True, exist_ok=True)
-        for definition in TOOL_DEFINITIONS.values():
-            (self.tools_root / definition.project_subdir).mkdir(parents=True, exist_ok=True)
+        try:
+            self.tools_root.mkdir(parents=True, exist_ok=True)
+            for definition in TOOL_DEFINITIONS.values():
+                (self.tools_root / definition.project_subdir).mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # Installed copies may live under Program Files, where normal users cannot write.
+            return
 
     def set_configured_path(self, tool_id: str, path: Path) -> None:
         definition = TOOL_DEFINITIONS[tool_id]
@@ -138,15 +142,15 @@ class ToolManager:
                     return Path(found)
         return None
 
-    def refresh(self) -> dict[str, ToolHealth]:
-        self.health = {tool_id: self.check_tool(tool_id) for tool_id in TOOL_DEFINITIONS}
+    def refresh(self, read_versions: bool = True) -> dict[str, ToolHealth]:
+        self.health = {tool_id: self.check_tool(tool_id, read_version=read_versions) for tool_id in TOOL_DEFINITIONS}
         return self.health
 
-    def refresh_tool(self, tool_id: str) -> ToolHealth:
-        self.health[tool_id] = self.check_tool(tool_id)
+    def refresh_tool(self, tool_id: str, read_version: bool = True) -> ToolHealth:
+        self.health[tool_id] = self.check_tool(tool_id, read_version=read_version)
         return self.health[tool_id]
 
-    def check_tool(self, tool_id: str) -> ToolHealth:
+    def check_tool(self, tool_id: str, read_version: bool = True) -> ToolHealth:
         definition = TOOL_DEFINITIONS[tool_id]
         path = self.resolve_tool_path(tool_id)
         if path is None:
@@ -155,6 +159,8 @@ class ToolManager:
             return ToolHealth(tool_id, definition.display_name, ToolHealthStatus.INVALID, path=path, reason="工具路径指向素材库，不能作为运行路径")
         if not path.exists():
             return ToolHealth(tool_id, definition.display_name, ToolHealthStatus.MISSING, path=path, reason="文件不存在")
+        if not read_version:
+            return ToolHealth(tool_id, definition.display_name, ToolHealthStatus.VERSION_UNKNOWN, path=path, reason="Version not checked")
         version = self._read_version(path, definition.version_args)
         if not version:
             return ToolHealth(tool_id, definition.display_name, ToolHealthStatus.VERSION_UNKNOWN, path=path, reason="无法读取版本信息")
@@ -179,7 +185,7 @@ class ToolManager:
         return first_line[:240]
 
     def require_tool(self, tool_id: str) -> Path:
-        health = self.refresh_tool(tool_id)
+        health = self.refresh_tool(tool_id, read_version=False)
         if not health.available or health.path is None:
             raise FileNotFoundError(f"未检测到 {health.display_name}，请到工具管理中配置或导入。{health.reason}")
         return health.path
